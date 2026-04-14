@@ -1,0 +1,121 @@
+export const SHIFT_ITEMS = [
+  'Fries',
+  'Cauliflower Bites',
+  'Onion Ring',
+  'Chicken Breast',
+  'Chicken Tenders',
+  'Beef Patty',
+  'Falafel Patty',
+  'Burger Bun (Martin\'s)',
+  'Chicken Bun (Martin\'s)',
+  'American Cheese Slice',
+  'Vegan Cheese Slice',
+  'Bacon',
+  'Coleslaw Mix (Cabbage)',
+  'Lettuce',
+  'Tomatoes',
+  'Yellow Onion',
+  'Cucumber (for pickles)',
+  'Sweet Heat Pickles',
+  'Dill Pickles (house)',
+  'Mayonnaise',
+  'Vegan Mayo',
+  'Mambo Sauce',
+  'Smack Sauce (house)',
+  'Surefire Sauce (house)',
+  'Honey Dip / Honey Butta',
+  'Soft Serve Mix',
+  'Milk',
+  'Chocolate Syrup',
+  'Strawberry Topping',
+  'Oreo Crumble',
+  'Whipped Cream',
+]
+
+export const PREP_INGREDIENTS = [
+  'Cauliflower',
+  'Cucumber',
+  'Yellow Onion',
+  'Lettuce',
+  'Tomatoes',
+  'Coleslaw Mix (Cabbage)',
+  'Chicken Breast',
+  'Chicken Tenders',
+]
+
+export const LOSS_REASONS = [
+  'Overcooked',
+  'Expired/Shelf Life',
+  'Dropped',
+  'Wrong Order Made',
+  'Burned',
+  'Over-Prepped',
+  'Equipment Issue',
+  'DoorDash',
+  'UberEats',
+  'Online Order',
+  'Quality',
+  'Other',
+]
+
+export const WASTE_TYPES = [
+  'Trim/Ends',
+  'Outer Peel/Layer',
+  'Bruised/Spoiled',
+  'Unusable Pieces',
+  'Other',
+]
+
+export const LOCATIONS = [
+  'Camp North End',
+]
+
+// Item → default unit (oz for weight items so shift leads log in oz by default)
+export const ITEM_UNITS: Record<string, string> = {
+  'Fries': 'oz',
+  'Cauliflower Bites': 'oz',
+  'Onion Ring': 'oz',
+  'Chicken Breast': 'oz',
+  'Chicken Tenders': 'oz',
+  'Beef Patty': 'each',
+  'Falafel Patty': 'each',
+  'Burger Bun (Martin\'s)': 'each',
+  'Chicken Bun (Martin\'s)': 'each',
+  'American Cheese Slice': 'each',
+  'Vegan Cheese Slice': 'each',
+  'Bacon': 'oz',
+  'Coleslaw Mix (Cabbage)': 'oz',
+  'Lettuce': 'oz',
+  'Tomatoes': 'oz',
+  'Yellow Onion': 'oz',
+  'Cucumber (for pickles)': 'oz',
+  'Sweet Heat Pickles': 'oz',
+  'Dill Pickles (house)': 'portion',
+  'Mayonnaise': 'oz',
+  'Vegan Mayo': 'oz',
+  'Mambo Sauce': 'oz',
+  'Smack Sauce (house)': 'oz',
+  'Surefire Sauce (house)': 'oz',
+  'Honey Dip / Honey Butta': 'oz',
+  'Soft Serve Mix': 'oz',
+  'Milk': 'oz',
+  'Chocolate Syrup': 'oz',
+  'Strawberry Topping': 'oz',
+  'Oreo Crumble': 'oz',
+  'Whipped Cream': 'oz',
+}
+
+// Items priced per lb in the price list — these get an oz/lb toggle in the form
+// Cost converts automatically: if logging oz, cost_per_unit stored as price_per_lb / 16
+export const LB_PRICED_ITEMS = new Set([
+  'Fries',
+  'Cauliflower Bites',
+  'Chicken Breast',
+  'Chicken Tenders',
+  'Bacon',
+  'Coleslaw Mix (Cabbage)',
+  'Lettuce',
+  'Tomatoes',
+  'Yellow Onion',
+  'Cucumber (for pickles)',
+])
