@@ -45,6 +45,86 @@ export type PriceListItem = {
   item_name: string
   unit: string
   cost_per_unit?: number | null
+  default_batch_lbs?: number | null
   notes?: string
   last_updated?: string
+}
+
+export type InventoryListType = 'Food' | 'Supplies' | 'FOH' | 'Walk-in Cooler'
+
+export type InventoryItem = {
+  id: string
+  name: string
+  category: string
+  list_type: InventoryListType
+  count_unit: string
+  order_unit: string
+  units_per_order_unit?: number | null
+  vendor?: string | null
+  storage_location?: string | null
+  par_level?: number | null
+  reorder_level?: number | null
+  active: boolean
+  sort_order: number
+}
+
+export type InventoryCount = {
+  id?: string
+  item_id: string
+  count_date: string
+  shift: 'Opening' | 'Closing'
+  counted_by: string
+  on_hand: number
+  created_at?: string
+}
+
+export type WeeklySales = {
+  id?: string
+  week_start: string
+  week_end: string
+  menu_item: string
+  qty_sold: number
+  net_sales?: number | null
+  source?: string | null   // 'toast_upload' | 'manual'
+  created_at?: string
+}
+
+export type EventLog = {
+  id?: string
+  event_date: string
+  event_name: string
+  impact_pct: number      // e.g. 20 = +20% volume expected
+  notes?: string | null
+  logged_by?: string | null
+  created_at?: string
+}
+
+export type SFContact = {
+  id: string
+  created_at?: string
+  name: string
+  phone: string
+  title: string | null
+  carrier: string | null
+  sms_email: string | null   // e.g. 7045551234@txt.att.net
+  active: boolean
+  restock_alerts: boolean
+}
+
+export type SFEvent = {
+  id: string
+  created_at?: string
+  title: string
+  event_date: string
+  start_time: string | null
+  end_time: string | null
+  event_type: string
+  location: string | null
+  notes: string | null
+  contact_name: string | null
+  contact_phone: string | null
+  alert_phones: string | null
+  alert_contact_ids: string | null
+  alert_days_before: number
+  alert_sent: boolean
 }

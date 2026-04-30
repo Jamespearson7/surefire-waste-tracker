@@ -1,10 +1,14 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { supabase, PrepWasteEntry } from '@/lib/supabase'
 import { PREP_INGREDIENTS, WASTE_TYPES } from '@/lib/constants'
 
-const today = () => new Date().toISOString().split('T')[0]
+const today = () => {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 const nowTime = () => new Date().toTimeString().slice(0, 5)
 
 const emptyForm = (): Omit<PrepWasteEntry, 'id' | 'created_at' | 'yield_pct' | 'waste_cost'> => ({
@@ -21,9 +25,11 @@ const emptyForm = (): Omit<PrepWasteEntry, 'id' | 'created_at' | 'yield_pct' | '
 })
 
 export default function PrepLogPage() {
+  const router = useRouter()
   const [form, setForm] = useState(emptyForm())
   const [entries, setEntries] = useState<PrepWasteEntry[]>([])
   const [prices, setPrices] = useState<Record<string, number | null>>({})
+  const [batchDefaults, setBatchDefaults] = useState<Record<string, number | null>>({})
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [deleteId, setDeleteId] = useState<string | null>(null)
@@ -34,13 +40,16 @@ export default function PrepLogPage() {
   }, [])
 
   async function loadPrices() {
-    const { data } = await supabase.from('price_list').select('item_name, cost_per_unit')
+    const { data } = await supabase.from('price_list').select('item_name, cost_per_unit, default_batch_lbs')
     if (data) {
-      const map: Record<string, number | null> = {}
-      data.forEach((r: { item_name: string; cost_per_unit: number | null }) => {
-        map[r.item_name] = r.cost_per_unit
+      const costMap: Record<string, number | null> = {}
+      const batchMap: Record<string, number | null> = {}
+      data.forEach((r: { item_name: string; cost_per_unit: number | null; default_batch_lbs: number | null }) => {
+        costMap[r.item_name] = r.cost_per_unit
+        batchMap[r.item_name] = r.default_batch_lbs
       })
-      setPrices(map)
+      setPrices(costMap)
+      setBatchDefaults(batchMap)
     }
   }
 
@@ -54,9 +63,14 @@ export default function PrepLogPage() {
   }
 
   function handleIngredientChange(ingredient: string) {
-    // Try to find cost per lb — match ingredient name to price list
     const cost = prices[ingredient] ?? prices[ingredient + ' (Cabbage)'] ?? null
-    setForm(f => ({ ...f, ingredient, cost_per_lb: cost }))
+    const batch = batchDefaults[ingredient] ?? null
+    setForm(f => ({
+      ...f,
+      ingredient,
+      cost_per_lb: cost,
+      total_purchased_lbs: batch ?? f.total_purchased_lbs,
+    }))
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -73,9 +87,8 @@ export default function PrepLogPage() {
     setSaving(false)
     if (error) { alert('Error saving entry: ' + error.message); return }
     setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
     setForm(f => ({ ...emptyForm(), shift: f.shift, prep_person: f.prep_person, date: f.date }))
-    loadEntries()
+    setTimeout(() => router.push('/dashboard'), 1200)
   }
 
   async function handleDelete(id: string) {
@@ -166,7 +179,14 @@ export default function PrepLogPage() {
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 items-end">
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Total Purchased (lbs)</label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-xs font-medium text-gray-600">Total Purchased (lbs)</label>
+              {form.ingredient && batchDefaults[form.ingredient] != null && (
+                <span className="text-xs text-orange-500 font-medium">
+                  ✓ auto-filled
+                </span>
+              )}
+            </div>
             <input
               type="number"
               min="0"
@@ -174,8 +194,15 @@ export default function PrepLogPage() {
               placeholder="0.00"
               value={form.total_purchased_lbs || ''}
               onChange={e => setForm(f => ({ ...f, total_purchased_lbs: parseFloat(e.target.value) || 0 }))}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
+              className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 ${
+                form.ingredient && batchDefaults[form.ingredient] != null
+                  ? 'border-orange-300 bg-orange-50'
+                  : 'border-gray-300'
+              }`}
             />
+            {form.ingredient && batchDefaults[form.ingredient] != null && (
+              <p className="text-xs text-gray-400 mt-1">Default: {batchDefaults[form.ingredient]} lbs — edit if different today</p>
+            )}
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Waste Weight (lbs)</label>

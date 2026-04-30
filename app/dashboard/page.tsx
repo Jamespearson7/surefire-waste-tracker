@@ -7,49 +7,110 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell
 } from 'recharts'
 
-type MonthFilter = string  // 'YYYY-MM'
+function toDateStr(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
 
-function toMonthStr(date: Date) {
-  return date.toISOString().slice(0, 7)
+function firstOfMonth(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-01`
 }
 
 export default function DashboardPage() {
-  const { isManager } = useAuth()
-  const [month, setMonth] = useState(toMonthStr(new Date()))
+  const { isManager, checkPin } = useAuth()
+  const today = new Date()
+  const [dateFrom, setDateFrom] = useState(firstOfMonth(today))
+  const [dateTo, setDateTo] = useState(toDateStr(today))
   const [shiftFilter, setShiftFilter] = useState<'All' | 'Opening' | 'Closing'>('All')
   const [shiftEntries, setShiftEntries] = useState<ShiftWasteEntry[]>([])
   const [prepEntries, setPrepEntries] = useState<PrepWasteEntry[]>([])
+  const [prevShiftEntries, setPrevShiftEntries] = useState<ShiftWasteEntry[]>([])
+  const [prevPrepEntries, setPrevPrepEntries] = useState<PrepWasteEntry[]>([])
+  const [prevDateFrom, setPrevDateFrom] = useState('')
+  const [prevDateTo, setPrevDateTo] = useState('')
   const [loading, setLoading] = useState(true)
+  const [deleteShiftId, setDeleteShiftId] = useState<string | null>(null)
+  const [deletePrepId, setDeletePrepId] = useState<string | null>(null)
+  const [deletePin, setDeletePin] = useState('')
+  const [deletePinError, setDeletePinError] = useState('')
 
   useEffect(() => {
-    if (!isManager) return
     load()
-  }, [isManager, month])
+  }, [dateFrom, dateTo])
 
   async function load() {
+    if (!dateFrom || !dateTo || dateFrom > dateTo) return
     setLoading(true)
-    const from = `${month}-01`
-    // Get first day of next month, then use lt — avoids invalid dates like April 31
-    const [y, m] = month.split('-').map(Number)
-    const nextMonth = new Date(y, m, 1)  // month index is 1-based here so this gives first of next month
-    const to = nextMonth.toISOString().split('T')[0]
 
-    const [sw, pw] = await Promise.all([
-      supabase.from('shift_waste_entries').select('*').gte('date', from).lt('date', to).order('date'),
-      supabase.from('prep_waste_entries').select('*').gte('date', from).lt('date', to).order('date'),
+    // Shift current range back 7 days for comparison
+    const shiftBack = (d: string, days: number) => {
+      const dt = new Date(d + 'T00:00:00')
+      dt.setDate(dt.getDate() - days)
+      return toDateStr(dt)
+    }
+    const pFrom = shiftBack(dateFrom, 7)
+    const pTo = shiftBack(dateTo, 7)
+    setPrevDateFrom(pFrom)
+    setPrevDateTo(pTo)
+
+    const [sw, pw, psw, ppw] = await Promise.all([
+      supabase.from('shift_waste_entries').select('*').gte('date', dateFrom).lte('date', dateTo).order('date'),
+      supabase.from('prep_waste_entries').select('*').gte('date', dateFrom).lte('date', dateTo).order('date'),
+      supabase.from('shift_waste_entries').select('*').gte('date', pFrom).lte('date', pTo),
+      supabase.from('prep_waste_entries').select('*').gte('date', pFrom).lte('date', pTo),
     ])
     if (sw.data) setShiftEntries(sw.data)
     if (pw.data) setPrepEntries(pw.data)
+    if (psw.data) setPrevShiftEntries(psw.data)
+    if (ppw.data) setPrevPrepEntries(ppw.data)
     setLoading(false)
   }
 
-  if (!isManager) {
-    return (
-      <div className="text-center py-20">
-        <p className="text-gray-500 text-sm">Manager access required.</p>
-        <p className="text-gray-400 text-xs mt-1">Use the Manager login button in the top nav.</p>
-      </div>
-    )
+  // Quick range shortcuts
+  function setThisMonth() {
+    const now = new Date()
+    setDateFrom(firstOfMonth(now))
+    setDateTo(toDateStr(now))
+  }
+  function setLastMonth() {
+    const now = new Date()
+    const first = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+    const last = new Date(now.getFullYear(), now.getMonth(), 0)
+    setDateFrom(toDateStr(first))
+    setDateTo(toDateStr(last))
+  }
+  function setThisWeek() {
+    const now = new Date()
+    const day = now.getDay()
+    const mon = new Date(now); mon.setDate(now.getDate() - (day === 0 ? 6 : day - 1))
+    setDateFrom(toDateStr(mon))
+    setDateTo(toDateStr(now))
+  }
+
+  function clearDelete() {
+    setDeleteShiftId(null)
+    setDeletePrepId(null)
+    setDeletePin('')
+    setDeletePinError('')
+  }
+
+  async function handleDeleteShift(id: string) {
+    if (!checkPin(deletePin)) {
+      setDeletePinError('Incorrect code')
+      return
+    }
+    await supabase.from('shift_waste_entries').delete().eq('id', id)
+    clearDelete()
+    load()
+  }
+
+  async function handleDeletePrep(id: string) {
+    if (!checkPin(deletePin)) {
+      setDeletePinError('Incorrect code')
+      return
+    }
+    await supabase.from('prep_waste_entries').delete().eq('id', id)
+    clearDelete()
+    load()
   }
 
   const filteredShift = shiftFilter === 'All'
@@ -59,14 +120,31 @@ export default function DashboardPage() {
     ? prepEntries
     : prepEntries.filter(e => e.shift === shiftFilter)
 
-  const totalShiftCost = filteredShift.reduce((s, e) => s + (e.total_cost ?? 0), 0)
-  const totalPrepCost = filteredPrep.reduce((s, e) => s + (e.waste_cost ?? 0), 0)
+  const totalShiftCost = filteredShift.reduce((s, e) => s + Number(e.total_cost ?? 0), 0)
+  const totalPrepCost = filteredPrep.reduce((s, e) => s + Number(e.waste_cost ?? 0), 0)
   const totalCost = totalShiftCost + totalPrepCost
 
-  const openingShift = shiftEntries.filter(e => e.shift === 'Opening').reduce((s, e) => s + (e.total_cost ?? 0), 0)
-  const closingShift = shiftEntries.filter(e => e.shift === 'Closing').reduce((s, e) => s + (e.total_cost ?? 0), 0)
-  const openingPrep = prepEntries.filter(e => e.shift === 'Opening').reduce((s, e) => s + (e.waste_cost ?? 0), 0)
-  const closingPrep = prepEntries.filter(e => e.shift === 'Closing').reduce((s, e) => s + (e.waste_cost ?? 0), 0)
+  // Previous week comparison
+  const filteredPrevShift = shiftFilter === 'All' ? prevShiftEntries : prevShiftEntries.filter(e => e.shift === shiftFilter)
+  const filteredPrevPrep = shiftFilter === 'All' ? prevPrepEntries : prevPrepEntries.filter(e => e.shift === shiftFilter)
+  const prevTotalCost = filteredPrevShift.reduce((s, e) => s + Number(e.total_cost ?? 0), 0)
+                      + filteredPrevPrep.reduce((s, e) => s + Number(e.waste_cost ?? 0), 0)
+  const pctChange = prevTotalCost > 0 ? ((totalCost - prevTotalCost) / prevTotalCost) * 100 : null
+
+  function fmtDate(d: string) {
+    if (!d) return ''
+    const [y, m, day] = d.split('-')
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+    return `${months[parseInt(m)-1]} ${parseInt(day)}`
+  }
+  const prevLabel = prevDateFrom === prevDateTo
+    ? fmtDate(prevDateFrom)
+    : `${fmtDate(prevDateFrom)} – ${fmtDate(prevDateTo)}`
+
+  const openingShift = shiftEntries.filter(e => e.shift === 'Opening').reduce((s, e) => s + Number(e.total_cost ?? 0), 0)
+  const closingShift = shiftEntries.filter(e => e.shift === 'Closing').reduce((s, e) => s + Number(e.total_cost ?? 0), 0)
+  const openingPrep = filteredPrep.filter(e => e.shift === 'Opening').reduce((s, e) => s + Number(e.waste_cost ?? 0), 0)
+  const closingPrep = filteredPrep.filter(e => e.shift === 'Closing').reduce((s, e) => s + Number(e.waste_cost ?? 0), 0)
 
   // Daily averages
   const uniqueDates = [...new Set(filteredShift.map(e => e.date).concat(filteredPrep.map(e => e.date)))]
@@ -81,6 +159,41 @@ export default function DashboardPage() {
     .sort((a, b) => b[1] - a[1])
     .slice(0, 8)
     .map(([name, value]) => ({ name, value: parseFloat(value.toFixed(2)) }))
+
+  // Loss reason breakdown
+  const reasonCosts: Record<string, number> = {}
+  filteredShift.forEach(e => {
+    if (e.loss_reason && e.total_cost) {
+      reasonCosts[e.loss_reason] = (reasonCosts[e.loss_reason] ?? 0) + Number(e.total_cost)
+    }
+  })
+  const reasonData = Object.entries(reasonCosts)
+    .sort((a, b) => b[1] - a[1])
+    .map(([name, value]) => ({ name, value: parseFloat(value.toFixed(2)) }))
+
+  const REASON_COLORS = ['#ea580c', '#fb923c', '#fdba74', '#fed7aa', '#fef3c7', '#fde68a', '#fcd34d', '#f59e0b']
+
+  // CSV export
+  function exportCSV() {
+    const shiftRows = filteredShift.map(e => [
+      e.date, e.shift, e.shift_lead, e.item, e.loss_reason ?? '', e.qty_wasted, e.unit,
+      e.total_cost != null ? e.total_cost.toFixed(2) : '', 'Shift'
+    ])
+    const prepRows = filteredPrep.map(e => [
+      e.date, e.shift, e.prep_person, e.ingredient, '', e.waste_weight_lbs, 'lbs',
+      e.waste_cost != null ? e.waste_cost.toFixed(2) : '', 'Prep'
+    ])
+    const header = ['Date', 'Shift', 'Person', 'Item/Ingredient', 'Loss Reason', 'Qty', 'Unit', 'Cost', 'Type']
+    const rows = [header, ...shiftRows, ...prepRows]
+    const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n')
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `waste-${dateFrom}-to-${dateTo}${shiftFilter !== 'All' ? `-${shiftFilter.toLowerCase()}` : ''}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
 
   // Daily cost trend
   const dailyCosts: Record<string, number> = {}
@@ -97,12 +210,33 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <h1 className="text-2xl font-bold text-gray-900">Manager Dashboard</h1>
-        <div className="flex items-center gap-2">
+        <h1 className="text-2xl font-bold text-gray-900">Waste Dashboard</h1>
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Quick shortcuts */}
+          <div className="flex rounded-lg border border-gray-300 overflow-hidden text-sm">
+            {[['Today', () => { const t = toDateStr(new Date()); setDateFrom(t); setDateTo(t) }], ['This Week', setThisWeek], ['This Month', setThisMonth], ['Last Month', setLastMonth]].map(([label, fn]) => (
+              <button
+                key={label as string}
+                type="button"
+                onClick={fn as () => void}
+                className="px-3 py-2 bg-white text-gray-600 hover:bg-orange-50 hover:text-orange-700 border-r border-gray-300 last:border-r-0 text-xs font-medium"
+              >
+                {label as string}
+              </button>
+            ))}
+          </div>
+          {/* Date range */}
           <input
-            type="month"
-            value={month}
-            onChange={e => setMonth(e.target.value)}
+            type="date"
+            value={dateFrom}
+            onChange={e => setDateFrom(e.target.value)}
+            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
+          />
+          <span className="text-gray-400 text-sm">→</span>
+          <input
+            type="date"
+            value={dateTo}
+            onChange={e => setDateTo(e.target.value)}
             className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
           />
           <select
@@ -114,6 +248,14 @@ export default function DashboardPage() {
             <option>Opening</option>
             <option>Closing</option>
           </select>
+          {!loading && (filteredShift.length > 0 || filteredPrep.length > 0) && (
+            <button
+              onClick={exportCSV}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-1"
+            >
+              ↓ Export CSV
+            </button>
+          )}
         </div>
       </div>
 
@@ -123,7 +265,23 @@ export default function DashboardPage() {
         <>
           {/* Summary cards */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <StatCard label="Total Waste Cost" value={`$${totalCost.toFixed(2)}`} color="orange" />
+            {/* Total cost with week-over-week comparison */}
+            <div className="rounded-xl border shadow-sm p-4 bg-orange-600 border-orange-500 col-span-2 sm:col-span-1">
+              <p className="text-xs font-medium uppercase tracking-wide mb-1 text-orange-100">Total Waste Cost</p>
+              <p className="text-xl font-bold text-white">${totalCost.toFixed(2)}</p>
+              {pctChange !== null ? (
+                <div className="flex items-center gap-1 mt-1">
+                  <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full ${
+                    pctChange > 0 ? 'bg-red-500 text-white' : pctChange < 0 ? 'bg-green-500 text-white' : 'bg-orange-400 text-white'
+                  }`}>
+                    {pctChange > 0 ? '↑' : pctChange < 0 ? '↓' : '•'} {Math.abs(pctChange).toFixed(1)}%
+                  </span>
+                  <span className="text-orange-200 text-xs">vs {prevLabel}</span>
+                </div>
+              ) : prevTotalCost === 0 && (filteredPrevShift.length > 0 || filteredPrevPrep.length > 0) ? null : (
+                <p className="text-orange-200 text-xs mt-1">No data for {prevLabel}</p>
+              )}
+            </div>
             <StatCard label="Daily Average" value={`$${dailyAvg.toFixed(2)}`} color="gray" />
             <StatCard label="Shift Waste" value={`$${totalShiftCost.toFixed(2)}`} color="gray" />
             <StatCard label="Prep Waste" value={`$${totalPrepCost.toFixed(2)}`} color="gray" />
@@ -166,6 +324,24 @@ export default function DashboardPage() {
             </div>
           )}
 
+          {reasonData.length > 0 && (
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+              <h2 className="font-semibold text-gray-800 mb-4">Waste by Loss Reason</h2>
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={reasonData} layout="vertical" margin={{ left: 20, right: 20 }}>
+                  <XAxis type="number" tickFormatter={v => `$${v}`} tick={{ fontSize: 11 }} />
+                  <YAxis type="category" dataKey="name" width={130} tick={{ fontSize: 11 }} />
+                  <Tooltip formatter={(v) => [`$${Number(v).toFixed(2)}`, 'Cost']} />
+                  <Bar dataKey="value" radius={[0, 4, 4, 0]}>
+                    {reasonData.map((_, i) => (
+                      <Cell key={i} fill={REASON_COLORS[i % REASON_COLORS.length]} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
           {dailyData.length > 0 && (
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
               <h2 className="font-semibold text-gray-800 mb-4">Daily Waste Cost</h2>
@@ -197,6 +373,7 @@ export default function DashboardPage() {
                       <th className="px-3 py-2">Reason</th>
                       <th className="px-3 py-2">Qty</th>
                       <th className="px-3 py-2">Cost</th>
+                      <th className="px-3 py-2"></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -215,6 +392,30 @@ export default function DashboardPage() {
                         <td className="px-3 py-2 font-medium">
                           {e.total_cost != null ? `$${e.total_cost.toFixed(2)}` : <span className="text-amber-500 text-xs">TBD</span>}
                         </td>
+                        {isManager && (
+                        <td className="px-3 py-2 text-right whitespace-nowrap">
+                          {deleteShiftId === e.id ? (
+                            <div className="flex flex-col items-end gap-1.5">
+                              <input
+                                type="password"
+                                inputMode="numeric"
+                                placeholder="Approval code"
+                                value={deletePin}
+                                autoFocus
+                                onChange={ev => { setDeletePin(ev.target.value); setDeletePinError('') }}
+                                className="w-32 border border-gray-300 rounded px-2 py-1 text-xs text-center focus:outline-none focus:ring-2 focus:ring-red-400"
+                              />
+                              {deletePinError && <span className="text-red-500 text-[11px] font-medium">{deletePinError}</span>}
+                              <span className="flex gap-1">
+                                <button onClick={() => handleDeleteShift(e.id!)} className="text-xs bg-red-50 text-red-600 px-2 py-1 rounded-lg hover:bg-red-100 font-medium">Delete</button>
+                                <button onClick={clearDelete} className="text-xs text-gray-400 px-2 py-1 rounded-lg hover:bg-gray-100">Cancel</button>
+                              </span>
+                            </div>
+                          ) : (
+                            <button onClick={() => { clearDelete(); setDeleteShiftId(e.id!) }} className="text-gray-300 hover:text-red-400 text-lg leading-none px-1">✕</button>
+                          )}
+                        </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>
@@ -240,6 +441,7 @@ export default function DashboardPage() {
                       <th className="px-3 py-2">Waste</th>
                       <th className="px-3 py-2">Yield</th>
                       <th className="px-3 py-2">Cost</th>
+                      <th className="px-3 py-2"></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -265,6 +467,30 @@ export default function DashboardPage() {
                         <td className="px-3 py-2 font-medium">
                           {e.waste_cost != null ? `$${e.waste_cost.toFixed(2)}` : <span className="text-amber-500 text-xs">TBD</span>}
                         </td>
+                        {isManager && (
+                        <td className="px-3 py-2 text-right whitespace-nowrap">
+                          {deletePrepId === e.id ? (
+                            <div className="flex flex-col items-end gap-1.5">
+                              <input
+                                type="password"
+                                inputMode="numeric"
+                                placeholder="Approval code"
+                                value={deletePin}
+                                autoFocus
+                                onChange={ev => { setDeletePin(ev.target.value); setDeletePinError('') }}
+                                className="w-32 border border-gray-300 rounded px-2 py-1 text-xs text-center focus:outline-none focus:ring-2 focus:ring-red-400"
+                              />
+                              {deletePinError && <span className="text-red-500 text-[11px] font-medium">{deletePinError}</span>}
+                              <span className="flex gap-1">
+                                <button onClick={() => handleDeletePrep(e.id!)} className="text-xs bg-red-50 text-red-600 px-2 py-1 rounded-lg hover:bg-red-100 font-medium">Delete</button>
+                                <button onClick={clearDelete} className="text-xs text-gray-400 px-2 py-1 rounded-lg hover:bg-gray-100">Cancel</button>
+                              </span>
+                            </div>
+                          ) : (
+                            <button onClick={() => { clearDelete(); setDeletePrepId(e.id!) }} className="text-gray-300 hover:text-red-400 text-lg leading-none px-1">✕</button>
+                          )}
+                        </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>

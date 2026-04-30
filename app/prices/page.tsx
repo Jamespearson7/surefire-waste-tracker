@@ -8,6 +8,7 @@ export default function PricesPage() {
   const { isManager } = useAuth()
   const [items, setItems] = useState<PriceListItem[]>([])
   const [editing, setEditing] = useState<Record<string, string>>({})
+  const [editingBatch, setEditingBatch] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState<string | null>(null)
   const [saved, setSaved] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -24,20 +25,24 @@ export default function PricesPage() {
 
   async function saveItem(item: PriceListItem) {
     const raw = editing[item.item_name]
+    const rawBatch = editingBatch[item.item_name]
     const cost = raw === '' || raw === undefined ? null : parseFloat(raw)
-    if (raw !== undefined && raw !== '' && isNaN(cost!)) return alert('Please enter a valid number.')
+    const batch = rawBatch === '' || rawBatch === undefined ? null : parseFloat(rawBatch)
+    if (raw !== undefined && raw !== '' && isNaN(cost!)) return alert('Please enter a valid cost.')
+    if (rawBatch !== undefined && rawBatch !== '' && isNaN(batch!)) return alert('Please enter a valid batch size.')
 
     setSaving(item.item_name)
-    const { error } = await supabase
-      .from('price_list')
-      .update({ cost_per_unit: cost, last_updated: new Date().toISOString().split('T')[0] })
-      .eq('item_name', item.item_name)
+    const update: Record<string, unknown> = { last_updated: new Date().toISOString().split('T')[0] }
+    if (raw !== undefined) update.cost_per_unit = cost
+    if (rawBatch !== undefined) update.default_batch_lbs = batch
+    const { error } = await supabase.from('price_list').update(update).eq('item_name', item.item_name)
     setSaving(null)
     if (error) { alert('Error: ' + error.message); return }
 
     setSaved(item.item_name)
     setTimeout(() => setSaved(null), 2000)
     setEditing(prev => { const n = { ...prev }; delete n[item.item_name]; return n })
+    setEditingBatch(prev => { const n = { ...prev }; delete n[item.item_name]; return n })
     load()
   }
 
@@ -76,6 +81,7 @@ export default function PricesPage() {
                       <th className="px-4 py-2">Item</th>
                       <th className="px-4 py-2">Unit</th>
                       <th className="px-4 py-2">Cost ($)</th>
+                      <th className="px-4 py-2">Default Batch (lbs)</th>
                       <th className="px-4 py-2">Notes</th>
                       <th className="px-4 py-2"></th>
                     </tr>
@@ -86,7 +92,9 @@ export default function PricesPage() {
                         key={item.item_name}
                         item={item}
                         editValue={editing[item.item_name]}
+                        editBatchValue={editingBatch[item.item_name]}
                         onChange={v => setEditing(prev => ({ ...prev, [item.item_name]: v }))}
+                        onBatchChange={v => setEditingBatch(prev => ({ ...prev, [item.item_name]: v }))}
                         onSave={() => saveItem(item)}
                         saving={saving === item.item_name}
                         saved={saved === item.item_name}
@@ -107,6 +115,7 @@ export default function PricesPage() {
                     <th className="px-4 py-2">Item</th>
                     <th className="px-4 py-2">Unit</th>
                     <th className="px-4 py-2">Cost ($)</th>
+                    <th className="px-4 py-2">Default Batch (lbs)</th>
                     <th className="px-4 py-2">Notes</th>
                     <th className="px-4 py-2">Updated</th>
                     <th className="px-4 py-2"></th>
@@ -118,7 +127,9 @@ export default function PricesPage() {
                       key={item.item_name}
                       item={item}
                       editValue={editing[item.item_name]}
+                      editBatchValue={editingBatch[item.item_name]}
                       onChange={v => setEditing(prev => ({ ...prev, [item.item_name]: v }))}
+                      onBatchChange={v => setEditingBatch(prev => ({ ...prev, [item.item_name]: v }))}
                       onSave={() => saveItem(item)}
                       saving={saving === item.item_name}
                       saved={saved === item.item_name}
@@ -136,30 +147,31 @@ export default function PricesPage() {
 }
 
 function PriceRow({
-  item, editValue, onChange, onSave, saving, saved, showDate
+  item, editValue, editBatchValue, onChange, onBatchChange, onSave, saving, saved, showDate
 }: {
   item: PriceListItem
   editValue?: string
+  editBatchValue?: string
   onChange: (v: string) => void
+  onBatchChange: (v: string) => void
   onSave: () => void
   saving: boolean
   saved: boolean
   showDate?: boolean
 }) {
-  const isEditing = editValue !== undefined
+  const isEditing = editValue !== undefined || editBatchValue !== undefined
   const displayCost = item.cost_per_unit != null ? `$${item.cost_per_unit}` : null
+  const displayBatch = item.default_batch_lbs != null ? `${item.default_batch_lbs} lbs` : null
 
   return (
     <tr className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
       <td className="px-4 py-2 font-medium text-gray-800">{item.item_name}</td>
       <td className="px-4 py-2 text-gray-500">{item.unit}</td>
-      <td className="px-4 py-2 w-32">
-        {isEditing ? (
+      {/* Cost */}
+      <td className="px-4 py-2 w-28">
+        {editValue !== undefined ? (
           <input
-            type="number"
-            min="0"
-            step="0.001"
-            placeholder="0.00"
+            type="number" min="0" step="0.001" placeholder="0.00"
             value={editValue}
             onChange={e => onChange(e.target.value)}
             className="w-full border border-orange-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
@@ -168,12 +180,29 @@ function PriceRow({
           />
         ) : (
           <span
-            className={`cursor-pointer hover:underline ${
-              displayCost ? 'text-gray-900' : 'text-amber-600 font-medium'
-            }`}
+            className={`cursor-pointer hover:underline ${displayCost ? 'text-gray-900' : 'text-amber-600 font-medium'}`}
             onClick={() => onChange(item.cost_per_unit?.toString() ?? '')}
           >
             {displayCost ?? 'TBD — click to set'}
+          </span>
+        )}
+      </td>
+      {/* Default batch */}
+      <td className="px-4 py-2 w-32">
+        {editBatchValue !== undefined ? (
+          <input
+            type="number" min="0" step="0.1" placeholder="e.g. 20"
+            value={editBatchValue}
+            onChange={e => onBatchChange(e.target.value)}
+            className="w-full border border-orange-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
+            onKeyDown={e => e.key === 'Enter' && onSave()}
+          />
+        ) : (
+          <span
+            className="cursor-pointer hover:underline text-gray-600"
+            onClick={() => onBatchChange(item.default_batch_lbs?.toString() ?? '')}
+          >
+            {displayBatch ?? <span className="text-gray-300">— click to set</span>}
           </span>
         )}
       </td>
@@ -190,23 +219,21 @@ function PriceRow({
               {saving ? '…' : saved ? '✓' : 'Save'}
             </button>
             <button
-              onClick={() => onChange(undefined as unknown as string)}
+              onClick={() => { onChange(undefined as unknown as string); onBatchChange(undefined as unknown as string) }}
               className="text-xs text-gray-400 hover:text-gray-600 px-1"
             >
               ✕
             </button>
           </div>
+        ) : saved ? (
+          <span className="text-xs text-green-600">✓ Saved</span>
         ) : (
-          saved ? (
-            <span className="text-xs text-green-600">✓ Saved</span>
-          ) : (
-            <button
-              onClick={() => onChange(item.cost_per_unit?.toString() ?? '')}
-              className="text-xs text-gray-400 hover:text-orange-600"
-            >
-              Edit
-            </button>
-          )
+          <button
+            onClick={() => onChange(item.cost_per_unit?.toString() ?? '')}
+            className="text-xs text-gray-400 hover:text-orange-600"
+          >
+            Edit
+          </button>
         )}
       </td>
     </tr>

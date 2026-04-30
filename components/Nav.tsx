@@ -40,10 +40,17 @@ export default function Nav() {
           </Link>
           <Link href="/" className={linkClass('/')}>Shift Log</Link>
           <Link href="/prep" className={linkClass('/prep')}>Prep Log</Link>
+          <Link href="/dashboard" className={linkClass('/dashboard')}>Dashboard</Link>
+          <Link href="/inventory" className={linkClass('/inventory')}>Inventory</Link>
+          <Link href="/calendar" className={linkClass('/calendar')}>Calendar</Link>
           {isManager && (
             <>
-              <Link href="/dashboard" className={linkClass('/dashboard')}>Dashboard</Link>
+              <Link href="/order" className={linkClass('/order')}>Orders</Link>
+              <Link href="/costing" className={linkClass('/costing')}>Costing</Link>
+              <Link href="/price-analysis" className={linkClass('/price-analysis')}>Price Analysis</Link>
+              <Link href="/simulator" className={linkClass('/simulator')}>Simulator</Link>
               <Link href="/prices" className={linkClass('/prices')}>Price List</Link>
+              <Link href="/contacts" className={linkClass('/contacts')}>Contacts</Link>
             </>
           )}
         </div>
@@ -61,7 +68,7 @@ export default function Nav() {
             </>
           ) : (
             <button
-              onClick={() => setShowPin(!showPin)}
+              onClick={() => { setShowPin(!showPin); setPin(''); setError('') }}
               className="text-xs text-orange-700 hover:text-orange-900 px-2 py-1 rounded hover:bg-orange-50 border border-orange-200"
             >
               Manager login

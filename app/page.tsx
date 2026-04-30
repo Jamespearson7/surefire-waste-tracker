@@ -1,10 +1,14 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { supabase, ShiftWasteEntry } from '@/lib/supabase'
 import { SHIFT_ITEMS, LOSS_REASONS, ITEM_UNITS, LB_PRICED_ITEMS } from '@/lib/constants'
 
-const today = () => new Date().toISOString().split('T')[0]
+const today = () => {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 const nowTime = () => new Date().toTimeString().slice(0, 5)
 
 const emptyForm = (): Omit<ShiftWasteEntry, 'id' | 'created_at' | 'total_cost'> => ({
@@ -22,12 +26,15 @@ const emptyForm = (): Omit<ShiftWasteEntry, 'id' | 'created_at' | 'total_cost'> 
 })
 
 export default function ShiftLogPage() {
+  const router = useRouter()
   const [form, setForm] = useState(emptyForm())
   const [entries, setEntries] = useState<ShiftWasteEntry[]>([])
   const [prices, setPrices] = useState<Record<string, number | null>>({})
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [deleteId, setDeleteId] = useState<string | null>(null)
+  const [editId, setEditId] = useState<string | null>(null)
+  const [editForm, setEditForm] = useState<Partial<ShiftWasteEntry>>({})
   const [photoFile, setPhotoFile] = useState<File | null>(null)
   const [photoPreview, setPhotoPreview] = useState<string | null>(null)
 
@@ -98,7 +105,7 @@ export default function ShiftLogPage() {
     if (!form.item) return alert('Please select an item.')
     if (!form.loss_reason) return alert('Please select a loss reason.')
     if (form.qty_wasted <= 0) return alert('Quantity must be greater than 0.')
-    if (form.loss_reason === 'Quality' && !photoFile) return alert('A photo is required for Quality entries.')
+    // Photo is encouraged but not required (KDS devices may not have a camera)
 
     setSaving(true)
 
@@ -123,11 +130,10 @@ export default function ShiftLogPage() {
     setSaving(false)
     if (error) { alert('Error saving entry: ' + error.message); return }
     setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
     setPhotoFile(null)
     setPhotoPreview(null)
     setForm(f => ({ ...emptyForm(), shift: f.shift, shift_lead: f.shift_lead, date: f.date }))
-    loadEntries()
+    setTimeout(() => router.push('/dashboard'), 1200)
   }
 
   async function handleDelete(id: string) {
@@ -136,7 +142,29 @@ export default function ShiftLogPage() {
     loadEntries()
   }
 
-  const totalCost = entries.reduce((sum, e) => sum + (e.total_cost ?? 0), 0)
+  function startEdit(e: ShiftWasteEntry) {
+    setEditId(e.id!)
+    setEditForm({ qty_wasted: e.qty_wasted, loss_reason: e.loss_reason, notes: e.notes ?? '' })
+    setDeleteId(null)
+  }
+
+  async function saveEdit(e: ShiftWasteEntry) {
+    const updatedCost = effectiveCost(prices[e.item], e.item, e.unit)
+    const { error } = await supabase
+      .from('shift_waste_entries')
+      .update({
+        qty_wasted: editForm.qty_wasted,
+        loss_reason: editForm.loss_reason,
+        notes: editForm.notes,
+        cost_per_unit: updatedCost,
+      })
+      .eq('id', e.id!)
+    if (error) { alert('Error saving: ' + error.message); return }
+    setEditId(null)
+    loadEntries()
+  }
+
+  const totalCost = entries.reduce((sum, e) => sum + Number(e.total_cost ?? 0), 0)
 
   return (
     <div className="space-y-6">
@@ -205,7 +233,11 @@ export default function ShiftLogPage() {
             <label className="block text-xs font-medium text-gray-600 mb-1">Loss Reason</label>
             <select
               value={form.loss_reason}
-              onChange={e => setForm(f => ({ ...f, loss_reason: e.target.value }))}
+              onChange={e => {
+                const reason = e.target.value
+                if (reason !== 'Quality') { setPhotoFile(null); setPhotoPreview(null) }
+                setForm(f => ({ ...f, loss_reason: reason }))
+              }}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
             >
               <option value="">— Select reason —</option>
@@ -277,12 +309,11 @@ export default function ShiftLogPage() {
         {form.loss_reason === 'Quality' && (
           <div className="border-2 border-dashed border-orange-300 rounded-xl p-4 bg-orange-50">
             <label className="block text-xs font-semibold text-orange-700 mb-2">
-              📷 Photo required for Quality entries
+              📷 Attach a photo (optional — recommended for Quality entries)
             </label>
             <input
               type="file"
               accept="image/*"
-              capture="environment"
               onChange={handlePhotoChange}
               className="w-full text-sm text-gray-600 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-orange-600 file:text-white hover:file:bg-orange-700"
             />
@@ -321,52 +352,86 @@ export default function ShiftLogPage() {
             No entries yet today.
           </p>
         ) : (
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-gray-50 border-b border-gray-200 text-left text-xs text-gray-500 uppercase tracking-wide">
-                  <th className="px-4 py-2">Time</th>
-                  <th className="px-4 py-2">Lead</th>
-                  <th className="px-4 py-2">Item</th>
-                  <th className="px-4 py-2">Reason</th>
-                  <th className="px-4 py-2">Qty</th>
-                  <th className="px-4 py-2">Cost</th>
-                  <th className="px-4 py-2">Photo</th>
-                  <th className="px-4 py-2"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {entries.map(e => (
-                  <tr key={e.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
-                    <td className="px-4 py-2 text-gray-500">{e.time_logged?.slice(0,5) ?? '—'}</td>
-                    <td className="px-4 py-2">{e.shift_lead}</td>
-                    <td className="px-4 py-2 font-medium">{e.item}</td>
-                    <td className="px-4 py-2 text-gray-600">{e.loss_reason}</td>
-                    <td className="px-4 py-2">{e.qty_wasted} {e.unit}</td>
-                    <td className="px-4 py-2 font-medium">
-                      {e.total_cost != null ? `$${e.total_cost.toFixed(2)}` : <span className="text-amber-600 text-xs">TBD</span>}
-                    </td>
-                    <td className="px-4 py-2">
-                      {e.photo_url
-                        ? <a href={e.photo_url} target="_blank" rel="noopener noreferrer">
-                            <img src={e.photo_url} alt="Quality photo" className="h-10 w-10 object-cover rounded-lg border border-gray-200 hover:opacity-80" />
-                          </a>
-                        : <span className="text-gray-300 text-xs">—</span>}
-                    </td>
-                    <td className="px-4 py-2">
-                      {deleteId === e.id ? (
-                        <span className="flex gap-1">
-                          <button onClick={() => handleDelete(e.id!)} className="text-xs text-red-600 hover:underline">Delete</button>
-                          <button onClick={() => setDeleteId(null)} className="text-xs text-gray-400 hover:underline">Cancel</button>
+          <div className="space-y-2">
+            {entries.map(e => (
+              <div key={e.id} className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+                {editId === e.id ? (
+                  <div className="space-y-3">
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Editing: {e.item}</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Quantity ({e.unit})</label>
+                        <input
+                          type="number" min="0" step="0.01"
+                          value={editForm.qty_wasted ?? ''}
+                          onChange={ev => setEditForm(f => ({ ...f, qty_wasted: parseFloat(ev.target.value) || 0 }))}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Loss Reason</label>
+                        <select
+                          value={editForm.loss_reason ?? ''}
+                          onChange={ev => setEditForm(f => ({ ...f, loss_reason: ev.target.value }))}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
+                        >
+                          {LOSS_REASONS.map(r => <option key={r}>{r}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
+                      <input
+                        type="text" placeholder="Optional notes"
+                        value={editForm.notes ?? ''}
+                        onChange={ev => setEditForm(f => ({ ...f, notes: ev.target.value }))}
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <button onClick={() => saveEdit(e)} className="bg-orange-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-orange-700">Save</button>
+                      <button onClick={() => setEditId(null)} className="text-gray-500 px-4 py-2 rounded-lg text-sm hover:bg-gray-100">Cancel</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold text-gray-900">{e.item}</span>
+                        <span className="text-sm text-gray-500">{e.qty_wasted} {e.unit}</span>
+                        <span className="font-semibold text-orange-700">
+                          {e.total_cost != null ? `$${Number(e.total_cost).toFixed(2)}` : <span className="text-amber-500 text-xs font-normal">Cost TBD</span>}
                         </span>
-                      ) : (
-                        <button onClick={() => setDeleteId(e.id!)} className="text-gray-300 hover:text-red-400 text-xs">✕</button>
+                      </div>
+                      <div className="flex items-center gap-2 mt-1 flex-wrap text-sm text-gray-500">
+                        <span>{e.time_logged?.slice(0,5) ?? '—'}</span>
+                        <span>·</span>
+                        <span>{e.shift_lead}</span>
+                        <span>·</span>
+                        <span>{e.loss_reason}</span>
+                        {e.notes && <><span>·</span><span className="italic">{e.notes}</span></>}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {e.photo_url && (
+                        <a href={e.photo_url} target="_blank" rel="noopener noreferrer">
+                          <img src={e.photo_url} alt="Quality photo" className="h-12 w-12 object-cover rounded-lg border border-gray-200 hover:opacity-80" />
+                        </a>
                       )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                      <button onClick={() => startEdit(e)} className="text-xs text-gray-400 hover:text-orange-600 px-2 py-1 rounded-lg hover:bg-orange-50">Edit</button>
+                      {deleteId === e.id ? (
+                        <div className="flex gap-1">
+                          <button onClick={() => handleDelete(e.id!)} className="text-xs bg-red-50 text-red-600 px-2 py-1 rounded-lg hover:bg-red-100">Delete</button>
+                          <button onClick={() => setDeleteId(null)} className="text-xs text-gray-400 px-2 py-1 rounded-lg hover:bg-gray-100">Cancel</button>
+                        </div>
+                      ) : (
+                        <button onClick={() => { setDeleteId(e.id!); setEditId(null) }} className="text-gray-300 hover:text-red-400 text-lg leading-none p-1">✕</button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
         )}
       </div>
