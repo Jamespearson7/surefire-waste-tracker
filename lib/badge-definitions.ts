@@ -34,20 +34,20 @@ const BOH_LINE: Badge = {
   title: 'Kitchen Line',
   pay: '$15/hr',
   sortOrder: 2,
-  minShifts: null,
+  minShifts: 37,
   minDays: 90,
   requiresServsafe: false,
   requiresBadge: null,
   requiresHours: null,
   skills: [
-    { key: 'fryer',      label: 'Fryer',             repsRequired: 4 },
-    { key: 'grill',      label: 'Grill',              repsRequired: 4 },
-    { key: 'saute',      label: 'Sauté/Expo',         repsRequired: 4 },
-    { key: 'sandwich',   label: 'Sandwich Station',   repsRequired: 4 },
-    { key: 'salad',      label: 'Salad Station',      repsRequired: 4 },
-    { key: 'prep',       label: 'Prep Work',          repsRequired: 4 },
+    { key: 'dish',     label: 'Dish',    repsRequired: 4 },
+    { key: 'prep',     label: 'Prep',    repsRequired: 6 },
+    { key: 'fryer',    label: 'Fryer',   repsRequired: 6 },
+    { key: 'flattop',  label: 'Flattop', repsRequired: 7 },
+    { key: 'build',    label: 'Build',   repsRequired: 7 },
+    { key: 'expo',     label: 'Expo',    repsRequired: 7 },
   ],
-  notes: 'Must work all 6 stations with at least 4 reps each. Minimum 90 days employed.',
+  notes: '6 stations · 37 total shifts · 90-day window.',
 }
 
 const BOH_TRAINER: Badge = {

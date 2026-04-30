@@ -142,7 +142,8 @@ function AddMemberModal({ onClose, onSaved }: { onClose: () => void; onSaved: ()
 }
 
 // ─── Skill Row ────────────────────────────────────────────────────────────────
-// Looks like the physical badge sheet: individual tap-to-check boxes per rep.
+// Matches the physical badge sheet exactly:
+//   STATION NAME  [1][2][3]...[n]   SHIFTS DONE __/n   DATE COMPLETED ___
 
 function SkillRow({
   skill, progress, badgeId, memberId, isManager, onUpdate,
@@ -159,19 +160,15 @@ function SkillRow({
   const allDone = required === 0 ? (progress?.completed ?? false) : done >= required
   const [saving, setSaving] = useState(false)
 
-  // Tap a specific box: if it's the next unchecked box, check it; if it's the
-  // last checked box, uncheck it (undo). Matches physical sheet behavior.
   async function tapBox(boxIndex: number) {
     if (!isManager || saving) return
     let newCount: number
     if (boxIndex === done) {
-      // checking the next empty box
-      newCount = done + 1
+      newCount = done + 1           // check next box
     } else if (boxIndex === done - 1) {
-      // unchecking the last filled box (undo)
-      newCount = done - 1
+      newCount = done - 1           // uncheck last box (undo)
     } else {
-      return // can't jump ahead or undo in the middle
+      return
     }
     setSaving(true)
     const nowCompleted = newCount >= required
@@ -192,11 +189,10 @@ function SkillRow({
     if (!error && data) onUpdate(data as SkillProgress)
   }
 
-  // Pass/fail single checkbox
   async function toggleSingle() {
     if (!isManager || saving) return
     setSaving(true)
-    const nowCompleted = !(progress?.completed ?? false)
+    const nowCompleted = !allDone
     const today = new Date().toISOString().slice(0, 10)
     const { data, error } = await supabase
       .from('badge_progress')
@@ -215,58 +211,68 @@ function SkillRow({
   }
 
   return (
-    <div className={`py-2.5 px-3 rounded-lg border transition-colors ${allDone ? 'bg-green-50 border-green-200' : 'bg-white border-gray-200'}`}>
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        {/* Skill name */}
-        <span className={`text-sm font-medium flex-1 min-w-0 ${allDone ? 'text-green-700' : 'text-gray-800'}`}>
+    <div className={`border-b border-gray-200 last:border-b-0 py-3 px-4 ${allDone ? 'bg-green-50' : 'bg-white'}`}>
+      <div className="flex items-center gap-3">
+
+        {/* Station name — bold, left, fixed width like the sheet */}
+        <span className={`text-base font-bold w-20 flex-shrink-0 ${allDone ? 'text-green-700' : 'text-gray-900'}`}>
           {skill.label}
-          {allDone && progress?.completed_date && (
-            <span className="ml-2 text-xs text-green-500 font-normal">
-              ✓ {new Date(progress.completed_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-            </span>
-          )}
         </span>
 
-        {/* Boxes */}
-        <div className="flex items-center gap-1.5 flex-shrink-0">
+        {/* Numbered boxes */}
+        <div className="flex items-center gap-1 flex-1">
           {required === 0 ? (
-            // Single pass/fail checkbox
             <button
               onClick={toggleSingle}
               disabled={saving || !isManager}
-              className={`w-7 h-7 rounded border-2 flex items-center justify-center transition-colors text-sm font-bold
-                ${allDone
-                  ? 'bg-green-500 border-green-500 text-white'
-                  : 'bg-white border-gray-400 text-transparent hover:border-green-400'}
+              className={`w-8 h-8 rounded border-2 flex items-center justify-center font-bold text-sm transition-colors
+                ${allDone ? 'bg-green-500 border-green-500 text-white' : 'bg-white border-gray-400 text-gray-400 hover:border-green-400'}
                 ${isManager ? 'cursor-pointer' : 'cursor-default'}`}
             >
               ✓
             </button>
           ) : (
-            // One box per rep — just like the physical sheet
             Array.from({ length: required }).map((_, i) => {
               const isChecked = i < done
-              const isNext = i === done        // next tappable box
-              const isLast = i === done - 1    // last checked (can undo)
+              const isNext = i === done
+              const isLast = i === done - 1
               return (
                 <button
                   key={i}
                   onClick={() => tapBox(i)}
                   disabled={saving || !isManager || (!isNext && !isLast)}
-                  className={`w-7 h-7 rounded border-2 flex items-center justify-center transition-all text-sm font-bold
-                    ${isChecked
-                      ? 'bg-orange-500 border-orange-500 text-white'
-                      : isNext && isManager
-                        ? 'bg-white border-gray-400 text-transparent hover:border-orange-400 hover:bg-orange-50 cursor-pointer'
-                        : 'bg-white border-gray-200 text-transparent cursor-default'}
-                    ${allDone && isChecked ? '!bg-green-500 !border-green-500' : ''}`}
+                  title={isNext && isManager ? 'Tap to check' : isLast && isManager ? 'Tap to undo' : undefined}
+                  className={`w-8 h-8 rounded border-2 flex items-center justify-center text-xs font-bold transition-all select-none
+                    ${isChecked && allDone
+                      ? 'bg-green-500 border-green-600 text-white'
+                      : isChecked
+                        ? 'bg-gray-800 border-gray-800 text-white'
+                        : isNext && isManager
+                          ? 'bg-white border-gray-400 text-gray-300 hover:border-gray-700 hover:text-gray-600 cursor-pointer'
+                          : 'bg-white border-gray-200 text-gray-200 cursor-default'}
+                  `}
                 >
-                  ✓
+                  {i + 1}
                 </button>
               )
             })
           )}
         </div>
+
+        {/* Right side: SHIFTS DONE + DATE COMPLETED */}
+        <div className="flex-shrink-0 text-right min-w-[100px]">
+          <div className="text-xs text-gray-400 uppercase tracking-wide leading-none mb-0.5">Shifts Done</div>
+          <div className={`text-sm font-bold ${allDone ? 'text-green-600' : 'text-gray-700'}`}>
+            {required === 0 ? (allDone ? '1 / 1' : '0 / 1') : `${done} / ${required}`}
+          </div>
+          <div className="text-xs text-gray-400 uppercase tracking-wide leading-none mt-1.5 mb-0.5">Date Completed</div>
+          <div className="text-xs text-gray-600 font-medium h-4">
+            {allDone && progress?.completed_date
+              ? new Date(progress.completed_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })
+              : <span className="text-gray-300">——</span>}
+          </div>
+        </div>
+
       </div>
     </div>
   )
@@ -552,9 +558,9 @@ function MemberDetail({
             </div>
           )}
 
-          {/* Skills */}
+          {/* Skills — flush rows like the physical sheet */}
           {nextBadge.skills.length > 0 && (
-            <div className="p-4 space-y-2">
+            <div className="divide-y divide-gray-100">
               {loading ? (
                 <p className="text-sm text-gray-400 text-center py-4">Loading progress…</p>
               ) : (
