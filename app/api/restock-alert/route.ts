@@ -114,7 +114,18 @@ export async function POST() {
     }))
 
   if (!lowItems.length) {
-    return NextResponse.json({ ok: true, sent: 0, lowCount: 0, message: 'All items are stocked above reorder level.' })
+    // Temporary debug — remove after diagnosis
+    const debugInfo = (items ?? []).slice(0, 5).map((item: { id: string; name: string; reorder_level: string }) => ({
+      name: item.name,
+      reorder_level: item.reorder_level,
+      threshold: parseFloat(String(item.reorder_level ?? '')),
+      onHand: latestCount[item.id] ?? 'NO COUNT',
+    }))
+    return NextResponse.json({
+      ok: true, sent: 0, lowCount: 0,
+      message: 'All items are stocked above reorder level.',
+      _debug: { itemsFound: items?.length ?? 0, countsFound: Object.keys(latestCount).length, sample: debugInfo }
+    })
   }
 
   // 4. Get contacts opted in to restock alerts
