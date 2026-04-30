@@ -70,22 +70,25 @@ export async function POST() {
   )
 
   // 1. Get all active items that have a reorder level set
-  const { data: items } = await db
+  const { data: items, error: itemsErr } = await db
     .from('inventory_items')
     .select('id, name, reorder_level, count_unit, vendor')
     .eq('active', true)
     .not('reorder_level', 'is', null)
 
+  if (itemsErr) return NextResponse.json({ ok: false, error: 'items query failed: ' + itemsErr.message }, { status: 500 })
   if (!items?.length) {
     return NextResponse.json({ ok: true, sent: 0, lowCount: 0, message: 'No items with reorder levels set.' })
   }
 
   // 2. Get the most recent count for each item
-  const { data: allCounts } = await db
+  const { data: allCounts, error: countsErr } = await db
     .from('inventory_counts')
     .select('item_id, on_hand, count_date')
     .in('item_id', items.map((i: { id: string }) => i.id))
     .order('count_date', { ascending: false })
+
+  if (countsErr) return NextResponse.json({ ok: false, error: 'counts query failed: ' + countsErr.message }, { status: 500 })
 
   // Build latest count map
   const latestCount: Record<string, number> = {}
@@ -114,17 +117,15 @@ export async function POST() {
     }))
 
   if (!lowItems.length) {
-    // Temporary debug — remove after diagnosis
-    const debugInfo = (items ?? []).slice(0, 5).map((item: { id: string; name: string; reorder_level: string }) => ({
-      name: item.name,
-      reorder_level: item.reorder_level,
+    const debugSample = (items ?? []).slice(0, 5).map((item: { id: string; name: string; reorder_level: string }) => ({
+      name: item.name, reorder_level: item.reorder_level,
       threshold: parseFloat(String(item.reorder_level ?? '')),
       onHand: latestCount[item.id] ?? 'NO COUNT',
     }))
     return NextResponse.json({
       ok: true, sent: 0, lowCount: 0,
       message: 'All items are stocked above reorder level.',
-      _debug: { itemsFound: items?.length ?? 0, countsFound: Object.keys(latestCount).length, sample: debugInfo }
+      _debug: { itemsFound: items?.length ?? 0, countsLoaded: Object.keys(latestCount).length, sample: debugSample }
     })
   }
 
