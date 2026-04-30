@@ -2,6 +2,58 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { smtpSend } from '@/lib/smtp-send'
 
+// Temporary debug endpoint — remove after fixing
+export async function GET() {
+  const db = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  )
+
+  const { data: items, error: itemErr } = await db
+    .from('inventory_items')
+    .select('id, name, reorder_level, count_unit')
+    .eq('active', true)
+    .not('reorder_level', 'is', null)
+
+  const itemIds = (items ?? []).map((i: { id: string }) => i.id)
+
+  const { data: allCounts, error: countErr } = await db
+    .from('inventory_counts')
+    .select('item_id, on_hand, count_date')
+    .in('item_id', itemIds)
+    .order('count_date', { ascending: false })
+
+  const latestCount: Record<string, number> = {}
+  if (allCounts) {
+    for (const c of allCounts as { item_id: string; on_hand: number }[]) {
+      if (!(c.item_id in latestCount)) latestCount[c.item_id] = c.on_hand
+    }
+  }
+
+  const debug = (items ?? []).map((item: { id: string; name: string; reorder_level: string }) => ({
+    name: item.name,
+    reorder_level: item.reorder_level,
+    threshold: parseFloat(String(item.reorder_level ?? '')),
+    onHand: latestCount[item.id] ?? null,
+    isLow: (() => {
+      const onHand = latestCount[item.id]
+      if (onHand === undefined) return false
+      const t = parseFloat(String(item.reorder_level ?? ''))
+      return !isNaN(t) && onHand <= t
+    })(),
+  }))
+
+  return NextResponse.json({
+    itemErr: itemErr?.message,
+    countErr: countErr?.message,
+    itemCount: items?.length ?? 0,
+    countRows: allCounts?.length ?? 0,
+    items: debug,
+    gmailSet: !!(process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD),
+    serviceKeySet: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+  })
+}
+
 export async function POST() {
   const { GMAIL_USER, GMAIL_APP_PASSWORD } = process.env
 
