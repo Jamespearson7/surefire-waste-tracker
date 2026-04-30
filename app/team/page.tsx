@@ -142,6 +142,7 @@ function AddMemberModal({ onClose, onSaved }: { onClose: () => void; onSaved: ()
 }
 
 // ─── Skill Row ────────────────────────────────────────────────────────────────
+// Looks like the physical badge sheet: individual tap-to-check boxes per rep.
 
 function SkillRow({
   skill, progress, badgeId, memberId, isManager, onUpdate,
@@ -155,16 +156,26 @@ function SkillRow({
 }) {
   const done = progress?.count_done ?? 0
   const required = skill.repsRequired
-  const completed = progress?.completed ?? false
+  const allDone = required === 0 ? (progress?.completed ?? false) : done >= required
   const [saving, setSaving] = useState(false)
 
-  async function increment() {
-    if (!isManager || completed) return
+  // Tap a specific box: if it's the next unchecked box, check it; if it's the
+  // last checked box, uncheck it (undo). Matches physical sheet behavior.
+  async function tapBox(boxIndex: number) {
+    if (!isManager || saving) return
+    let newCount: number
+    if (boxIndex === done) {
+      // checking the next empty box
+      newCount = done + 1
+    } else if (boxIndex === done - 1) {
+      // unchecking the last filled box (undo)
+      newCount = done - 1
+    } else {
+      return // can't jump ahead or undo in the middle
+    }
     setSaving(true)
-    const newCount = done + 1
-    const nowCompleted = required === 0 ? false : newCount >= required
+    const nowCompleted = newCount >= required
     const today = new Date().toISOString().slice(0, 10)
-
     const { data, error } = await supabase
       .from('badge_progress')
       .upsert({
@@ -177,17 +188,16 @@ function SkillRow({
       }, { onConflict: 'member_id,badge_id,skill_key' })
       .select()
       .single()
-
     setSaving(false)
     if (!error && data) onUpdate(data as SkillProgress)
   }
 
-  async function toggleCheckbox() {
-    if (!isManager) return
+  // Pass/fail single checkbox
+  async function toggleSingle() {
+    if (!isManager || saving) return
     setSaving(true)
+    const nowCompleted = !(progress?.completed ?? false)
     const today = new Date().toISOString().slice(0, 10)
-    const nowCompleted = !completed
-
     const { data, error } = await supabase
       .from('badge_progress')
       .upsert({
@@ -200,71 +210,64 @@ function SkillRow({
       }, { onConflict: 'member_id,badge_id,skill_key' })
       .select()
       .single()
-
     setSaving(false)
     if (!error && data) onUpdate(data as SkillProgress)
   }
 
-  const pct = required === 0 ? (completed ? 100 : 0) : Math.min(100, Math.round((done / required) * 100))
-
   return (
-    <div className={`flex items-center gap-3 py-2 px-3 rounded-lg transition-colors ${completed ? 'bg-green-50' : 'bg-gray-50'}`}>
-      {required === 0 ? (
-        // Checkbox skill (pass/fail)
-        <button
-          onClick={toggleCheckbox}
-          disabled={saving || !isManager}
-          className={`w-6 h-6 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
-            completed
-              ? 'bg-green-500 border-green-500 text-white'
-              : 'border-gray-300 bg-white'
-          } ${isManager ? 'cursor-pointer hover:border-green-400' : 'cursor-default'}`}
-        >
-          {completed && <span className="text-xs">✓</span>}
-        </button>
-      ) : (
-        // Rep counter
-        <button
-          onClick={increment}
-          disabled={saving || completed || !isManager}
-          className={`w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 text-xs font-bold transition-colors ${
-            completed
-              ? 'bg-green-500 border-green-500 text-white cursor-default'
-              : isManager
-                ? 'border-orange-400 bg-white text-orange-600 hover:bg-orange-50 cursor-pointer'
-                : 'border-gray-300 bg-white text-gray-400 cursor-default'
-          }`}
-        >
-          {completed ? '✓' : '+'}
-        </button>
-      )}
-
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center justify-between gap-2">
-          <span className={`text-sm ${completed ? 'text-green-700 font-medium' : 'text-gray-700'}`}>
-            {skill.label}
-          </span>
-          {required > 0 && (
-            <span className={`text-xs font-mono flex-shrink-0 ${completed ? 'text-green-600' : 'text-gray-500'}`}>
-              {done}/{required}
+    <div className={`py-2.5 px-3 rounded-lg border transition-colors ${allDone ? 'bg-green-50 border-green-200' : 'bg-white border-gray-200'}`}>
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        {/* Skill name */}
+        <span className={`text-sm font-medium flex-1 min-w-0 ${allDone ? 'text-green-700' : 'text-gray-800'}`}>
+          {skill.label}
+          {allDone && progress?.completed_date && (
+            <span className="ml-2 text-xs text-green-500 font-normal">
+              ✓ {new Date(progress.completed_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
             </span>
           )}
-        </div>
-        {required > 0 && (
-          <div className="mt-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">
-            <div
-              className={`h-full rounded-full transition-all ${completed ? 'bg-green-500' : 'bg-orange-400'}`}
-              style={{ width: `${pct}%` }}
-            />
-          </div>
-        )}
-      </div>
-
-      {completed && progress?.completed_date && (
-        <span className="text-xs text-green-600 flex-shrink-0">
-          {new Date(progress.completed_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
         </span>
-      )}
+
+        {/* Boxes */}
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          {required === 0 ? (
+            // Single pass/fail checkbox
+            <button
+              onClick={toggleSingle}
+              disabled={saving || !isManager}
+              className={`w-7 h-7 rounded border-2 flex items-center justify-center transition-colors text-sm font-bold
+                ${allDone
+                  ? 'bg-green-500 border-green-500 text-white'
+                  : 'bg-white border-gray-400 text-transparent hover:border-green-400'}
+                ${isManager ? 'cursor-pointer' : 'cursor-default'}`}
+            >
+              ✓
+            </button>
+          ) : (
+            // One box per rep — just like the physical sheet
+            Array.from({ length: required }).map((_, i) => {
+              const isChecked = i < done
+              const isNext = i === done        // next tappable box
+              const isLast = i === done - 1    // last checked (can undo)
+              return (
+                <button
+                  key={i}
+                  onClick={() => tapBox(i)}
+                  disabled={saving || !isManager || (!isNext && !isLast)}
+                  className={`w-7 h-7 rounded border-2 flex items-center justify-center transition-all text-sm font-bold
+                    ${isChecked
+                      ? 'bg-orange-500 border-orange-500 text-white'
+                      : isNext && isManager
+                        ? 'bg-white border-gray-400 text-transparent hover:border-orange-400 hover:bg-orange-50 cursor-pointer'
+                        : 'bg-white border-gray-200 text-transparent cursor-default'}
+                    ${allDone && isChecked ? '!bg-green-500 !border-green-500' : ''}`}
+                >
+                  ✓
+                </button>
+              )
+            })
+          )}
+        </div>
+      </div>
     </div>
   )
 }
