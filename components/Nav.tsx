@@ -43,6 +43,7 @@ export default function Nav() {
           <Link href="/dashboard" className={linkClass('/dashboard')}>Dashboard</Link>
           <Link href="/inventory" className={linkClass('/inventory')}>Inventory</Link>
           <Link href="/calendar" className={linkClass('/calendar')}>Calendar</Link>
+          <Link href="/team" className={linkClass('/team')}>Team Growth</Link>
           {isManager && (
             <>
               <Link href="/order" className={linkClass('/order')}>Orders</Link>
