@@ -254,7 +254,19 @@ export default function InventoryPage() {
     setAlerting(true)
     setAlertResult(null)
     try {
-      const res  = await fetch('/api/restock-alert', { method: 'POST' })
+      // Send the already-calculated low items directly — no need for server to re-query
+      const payload = lowStockItems.map(({ item, onHand, threshold }) => ({
+        name: item.name,
+        onHand,
+        reorderLevel: threshold,
+        unit: item.count_unit,
+        vendor: item.vendor ?? null,
+      }))
+      const res  = await fetch('/api/restock-alert', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: payload }),
+      })
       const data = await res.json()
       if (data.ok) {
         setAlertResult({ ok: true, msg: `✓ Alert sent to ${data.sent} contact${data.sent !== 1 ? 's' : ''} — ${data.lowCount} low item${data.lowCount !== 1 ? 's' : ''} flagged.` })
