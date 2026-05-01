@@ -159,10 +159,10 @@ export async function POST(req: NextRequest) {
         const { error } = await db.from('team_members').update({
           name:         fullName,
           active:       isActive,
+          track,                                        // always update track based on hours
           boh_hours:    Math.max(bohH, existing.boh_hours ?? 0),
           foh_hours:    Math.max(fohH, existing.foh_hours ?? 0),
           total_shifts: Math.max(shifts, existing.total_shifts ?? 0),
-          // Update start_date if Toast has an earlier date than what's stored
           ...(startDate && (!existing.start_date || startDate < existing.start_date)
             ? { start_date: startDate }
             : {}),
