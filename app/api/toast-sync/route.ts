@@ -75,10 +75,12 @@ export async function POST(req: NextRequest) {
     }
 
     // 3. Tally hours and shifts per employee guid
+    type ToastEntry = { employee?: { guid?: string }; employeeGuid?: string; job?: { guid?: string }; jobGuid?: string; inDate?: string; outDate?: string; clockInDate?: string; regularHours?: number; overtimeHours?: number }
     type Tally = { bohHours: number; fohHours: number; shifts: Set<string>; startDate: string | null }
     const tally: Record<string, Tally> = {}
 
-    for (const entry of timeEntries) {
+    for (const rawEntry of timeEntries) {
+      const entry = rawEntry as ToastEntry
       const empGuid = entry.employee?.guid ?? entry.employeeGuid
       if (!empGuid) continue
 
