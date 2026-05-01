@@ -151,9 +151,12 @@ export async function POST(req: NextRequest) {
       // Check for existing record by toast_guid
       const { data: existing } = await db
         .from('team_members')
-        .select('id, boh_hours, foh_hours, total_shifts, start_date')
+        .select('id, boh_hours, foh_hours, total_shifts, start_date, hidden')
         .eq('toast_guid', guid)
         .maybeSingle()
+
+      // Skip members that were manually hidden on the site
+      if (existing?.hidden) { skipped.push(fullName); continue }
 
       if (existing) {
         const { error } = await db.from('team_members').update({

@@ -23,6 +23,7 @@ type TeamMember = {
   foh_hours: number
   notes: string | null
   active: boolean
+  hidden: boolean
 }
 
 type SkillProgress = {
@@ -565,10 +566,10 @@ function MemberDetail({
     setAwardConfirm(null)
   }
 
-  async function deactivateMember() {
+  async function hideMember() {
     if (!isManager) return
-    const { error } = await supabase.from('team_members').update({ active: false }).eq('id', member.id)
-    if (!error) { onUpdated({ ...member, active: false }); onBack() }
+    const { error } = await supabase.from('team_members').update({ hidden: true, active: false }).eq('id', member.id)
+    if (!error) { onUpdated({ ...member, hidden: true, active: false }); onBack() }
   }
 
   const daysWorked = daysSince(member.start_date)
@@ -688,12 +689,18 @@ function MemberDetail({
         color="bg-sky-50"
       />
 
-      {/* Deactivate */}
-      {isManager && member.active && (
-        <div className="pt-2">
-          <button onClick={deactivateMember} className="text-xs text-red-500 hover:text-red-700 hover:underline">
-            Mark as inactive / no longer employed
+      {/* Remove from site */}
+      {isManager && !member.hidden && (
+        <div className="pt-2 pb-4">
+          <button
+            onClick={hideMember}
+            className="text-xs text-red-400 hover:text-red-600 hover:underline"
+          >
+            Remove from site
           </button>
+          <p className="text-xs text-gray-400 mt-1">
+            Hides this member from the site and skips them on future Toast syncs. Does not affect Toast.
+          </p>
         </div>
       )}
 
@@ -779,6 +786,7 @@ export default function TeamPage() {
   }
 
   const filtered = members.filter(m => {
+    if (m.hidden) return false                          // always hide removed members
     if (!showInactive && !m.active) return false
     if (filterTrack !== 'ALL' && m.track !== filterTrack) return false
     return true
