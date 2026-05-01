@@ -82,7 +82,8 @@ export async function POST(req: NextRequest) {
     type Tally = {
       bohHours: number
       fohHours: number
-      shifts: Set<string>   // unique businessDate strings
+      shifts: Set<string>     // unique businessDate strings
+      earliestDate: string | null  // earliest shift date = real start date
     }
     const tally: Record<string, Tally> = {}
 
@@ -91,7 +92,7 @@ export async function POST(req: NextRequest) {
       if (!empGuid) continue
       if (e.deleted === true) continue
 
-      if (!tally[empGuid]) tally[empGuid] = { bohHours: 0, fohHours: 0, shifts: new Set() }
+      if (!tally[empGuid]) tally[empGuid] = { bohHours: 0, fohHours: 0, shifts: new Set(), earliestDate: null }
 
       const hours = ((e.regularHours as number) ?? 0) + ((e.overtimeHours as number) ?? 0)
       const jobGuid = (e.jobReference as Record<string, string> | null)?.guid ?? ''
@@ -101,14 +102,22 @@ export async function POST(req: NextRequest) {
       if (track === 'BOH') tally[empGuid].bohHours += hours
       else                 tally[empGuid].fohHours += hours
 
-      // businessDate is "YYYYMMDD" — each unique date = 1 shift
+      // businessDate is "YYYYMMDD" — convert to YYYY-MM-DD for comparison
       const bd = e.businessDate as string
+      let shiftDate: string | null = null
       if (bd && bd.length === 8) {
-        tally[empGuid].shifts.add(bd)
+        shiftDate = `${bd.slice(0, 4)}-${bd.slice(4, 6)}-${bd.slice(6, 8)}`
+        tally[empGuid].shifts.add(shiftDate)
       } else {
-        // fallback to inDate
         const inDate = (e.inDate as string | null)?.slice(0, 10)
-        if (inDate) tally[empGuid].shifts.add(inDate)
+        if (inDate) { tally[empGuid].shifts.add(inDate); shiftDate = inDate }
+      }
+
+      // Track the earliest shift date as the real employment start
+      if (shiftDate) {
+        if (!tally[empGuid].earliestDate || shiftDate < tally[empGuid].earliestDate!) {
+          tally[empGuid].earliestDate = shiftDate
+        }
       }
     }
 
@@ -136,15 +145,13 @@ export async function POST(req: NextRequest) {
       const shifts    = empTally?.shifts.size ?? 0
       const track: 'BOH' | 'FOH' = bohH >= fohH ? 'BOH' : 'FOH'
 
-      // Start date: use createdDate (earliest available in Toast for this employee)
-      const startDate = emp.createdDate
-        ? (emp.createdDate as string).slice(0, 10)
-        : null
+      // Use earliest shift date as start date — most accurate real-world hire date
+      const startDate = empTally?.earliestDate ?? null
 
       // Check for existing record by toast_guid
       const { data: existing } = await db
         .from('team_members')
-        .select('id, boh_hours, foh_hours, total_shifts')
+        .select('id, boh_hours, foh_hours, total_shifts, start_date')
         .eq('toast_guid', guid)
         .maybeSingle()
 
@@ -155,6 +162,10 @@ export async function POST(req: NextRequest) {
           boh_hours:    Math.max(bohH, existing.boh_hours ?? 0),
           foh_hours:    Math.max(fohH, existing.foh_hours ?? 0),
           total_shifts: Math.max(shifts, existing.total_shifts ?? 0),
+          // Update start_date if Toast has an earlier date than what's stored
+          ...(startDate && (!existing.start_date || startDate < existing.start_date)
+            ? { start_date: startDate }
+            : {}),
         }).eq('id', existing.id)
         if (error) errors.push(`update ${fullName}: ${error.message}`)
         else updated++
