@@ -725,6 +725,30 @@ export default function TeamPage() {
   const [selectedMember, setSelectedMember] = useState<TeamMember | null>(null)
   const [filterTrack, setFilterTrack] = useState<Track | 'ALL'>('ALL')
   const [showInactive, setShowInactive] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+  const [syncResult, setSyncResult] = useState<{ ok: boolean; msg: string } | null>(null)
+
+  async function syncFromToast() {
+    setSyncing(true)
+    setSyncResult(null)
+    try {
+      const res = await fetch('/api/toast-sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ daysBack: 365 }),
+      })
+      const data = await res.json()
+      if (data.ok) {
+        setSyncResult({ ok: true, msg: `✓ Synced ${data.employeesFromToast} employees from Toast — ${data.created} new, ${data.updated} updated.` })
+        await load()
+      } else {
+        setSyncResult({ ok: false, msg: data.error ?? 'Sync failed.' })
+      }
+    } catch {
+      setSyncResult({ ok: false, msg: 'Network error — could not reach Toast.' })
+    }
+    setSyncing(false)
+  }
 
   async function load() {
     setLoading(true)
@@ -772,7 +796,7 @@ export default function TeamPage() {
   return (
     <main className="max-w-2xl mx-auto px-4 py-6 space-y-5">
       {/* Page header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Team Growth</h1>
           <p className="text-sm text-gray-500 mt-0.5">
@@ -780,14 +804,35 @@ export default function TeamPage() {
           </p>
         </div>
         {isManager && (
-          <button
-            onClick={() => setShowAdd(true)}
-            className="bg-orange-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-orange-700"
-          >
-            + Add Member
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={syncFromToast}
+              disabled={syncing}
+              className="flex items-center gap-1.5 bg-white border border-gray-300 text-gray-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
+            >
+              {syncing ? (
+                <><span className="animate-spin">⟳</span> Syncing…</>
+              ) : (
+                <><span>⟳</span> Sync Toast</>
+              )}
+            </button>
+            <button
+              onClick={() => setShowAdd(true)}
+              className="bg-orange-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-orange-700"
+            >
+              + Add Member
+            </button>
+          </div>
         )}
       </div>
+
+      {/* Sync result banner */}
+      {syncResult && (
+        <div className={`px-4 py-3 rounded-lg text-sm font-medium ${syncResult.ok ? 'bg-green-50 text-green-800 border border-green-200' : 'bg-red-50 text-red-800 border border-red-200'}`}>
+          {syncResult.msg}
+          <button onClick={() => setSyncResult(null)} className="ml-3 text-xs opacity-60 hover:opacity-100">✕</button>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="flex gap-2 flex-wrap">

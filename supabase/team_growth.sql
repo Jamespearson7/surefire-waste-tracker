@@ -58,3 +58,7 @@ alter table awarded_badges enable row level security;
 create policy "allow_all_team_members"   on team_members   for all using (true) with check (true);
 create policy "allow_all_badge_progress" on badge_progress for all using (true) with check (true);
 create policy "allow_all_awarded_badges" on awarded_badges for all using (true) with check (true);
+
+-- Add Toast integration column (run if upgrading from initial schema)
+alter table team_members add column if not exists toast_guid text unique;
+create index if not exists idx_team_members_toast_guid on team_members(toast_guid);
