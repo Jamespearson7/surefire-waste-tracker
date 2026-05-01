@@ -736,7 +736,9 @@ function MemberDetail({
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function TeamPage() {
-  const { isManager } = useAuth()
+  const { isManager, login } = useAuth()
+  const [pin, setPin] = useState('')
+  const [pinError, setPinError] = useState('')
   const [members, setMembers] = useState<TeamMember[]>([])
   const [loading, setLoading] = useState(true)
   const [showAdd, setShowAdd] = useState(false)
@@ -792,9 +794,47 @@ export default function TeamPage() {
     return true
   })
 
-  const activeCount = members.filter(m => m.active).length
-  const bohCount = members.filter(m => m.active && m.track === 'BOH').length
-  const fohCount = members.filter(m => m.active && m.track === 'FOH').length
+  const activeCount = members.filter(m => m.active && !m.hidden).length
+  const bohCount = members.filter(m => m.active && !m.hidden && m.track === 'BOH').length
+  const fohCount = members.filter(m => m.active && !m.hidden && m.track === 'FOH').length
+
+  // ── Manager gate ──────────────────────────────────────────────────────────
+  if (!isManager) {
+    return (
+      <main className="max-w-sm mx-auto px-4 py-20 text-center space-y-6">
+        <div className="text-5xl">🔒</div>
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Manager Access Only</h1>
+          <p className="text-sm text-gray-500 mt-2">Enter your manager PIN to view Team Growth.</p>
+        </div>
+        <form
+          onSubmit={e => {
+            e.preventDefault()
+            if (login(pin)) { setPinError('') }
+            else { setPinError('Wrong PIN — try again.'); setPin('') }
+          }}
+          className="space-y-3"
+        >
+          <input
+            type="password"
+            inputMode="numeric"
+            placeholder="Enter PIN"
+            value={pin}
+            onChange={e => { setPin(e.target.value); setPinError('') }}
+            className="w-full border border-gray-300 rounded-lg px-4 py-3 text-center text-lg tracking-widest focus:outline-none focus:ring-2 focus:ring-orange-400"
+            autoFocus
+          />
+          {pinError && <p className="text-red-600 text-sm">{pinError}</p>}
+          <button
+            type="submit"
+            className="w-full bg-orange-600 text-white py-3 rounded-lg font-semibold hover:bg-orange-700"
+          >
+            Unlock
+          </button>
+        </form>
+      </main>
+    )
+  }
 
   // Member detail view
   if (selectedMember) {
