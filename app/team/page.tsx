@@ -278,6 +278,184 @@ function SkillRow({
   )
 }
 
+// ─── Badge Section (reusable for both primary + cross-train tracks) ───────────
+
+function BadgeSection({
+  targetBadge,
+  isPrimary,
+  member,
+  progress,
+  awarded,
+  loading,
+  isManager,
+  onSkillUpdate,
+  onAward,
+}: {
+  targetBadge: Badge
+  isPrimary: boolean
+  member: TeamMember
+  progress: SkillProgress[]
+  awarded: AwardedBadge[]
+  loading: boolean
+  isManager: boolean
+  onSkillUpdate: (u: SkillProgress) => void
+  onAward: (badge: Badge) => void
+}) {
+  const daysWorked = daysSince(member.start_date)
+  const totalHours = (member.boh_hours ?? 0) + (member.foh_hours ?? 0)
+
+  const meetsRequirements = useMemo(() => {
+    if (targetBadge.minDays && (daysWorked ?? 0) < targetBadge.minDays) return false
+    if (targetBadge.minShifts && member.total_shifts < targetBadge.minShifts) return false
+    if (targetBadge.requiresServsafe && !member.servsafe_active) return false
+    if (targetBadge.requiresHours && totalHours < targetBadge.requiresHours) return false
+    if (targetBadge.requiresBadge && !awarded.some(a => a.badge_id === targetBadge.requiresBadge)) return false
+    for (const skill of targetBadge.skills) {
+      const p = progress.find(p => p.badge_id === targetBadge.id && p.skill_key === skill.key)
+      if (skill.repsRequired === 0) { if (!p?.completed) return false }
+      else { if ((p?.count_done ?? 0) < skill.repsRequired) return false }
+    }
+    return true
+  }, [targetBadge, member, progress, awarded, daysWorked, totalHours])
+
+  const crossTrackLabel = targetBadge.track === 'BOH' ? 'BOH Cross-Training' : 'FOH Cross-Training'
+  const sectionLabel = isPrimary ? `Working toward: ${targetBadge.title}` : `${crossTrackLabel}: ${targetBadge.title}`
+  const headerColor = isPrimary
+    ? 'bg-orange-50 border-orange-200'
+    : targetBadge.track === 'BOH'
+      ? 'bg-orange-50 border-orange-200'
+      : 'bg-sky-50 border-sky-200'
+  const labelColor = isPrimary ? 'text-orange-800' : targetBadge.track === 'BOH' ? 'text-orange-700' : 'text-sky-700'
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+      {/* Header */}
+      <div className={`px-4 py-3 border-b flex items-center justify-between ${headerColor}`}>
+        <div>
+          <h2 className={`font-bold text-base ${labelColor}`}>{sectionLabel}</h2>
+          <p className="text-xs text-gray-500 mt-0.5">{targetBadge.pay} · {targetBadge.notes}</p>
+        </div>
+        {!isPrimary && (
+          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${targetBadge.track === 'BOH' ? 'bg-orange-100 text-orange-700' : 'bg-sky-100 text-sky-700'}`}>
+            {targetBadge.track}
+          </span>
+        )}
+      </div>
+
+      {/* Requirements chips */}
+      {(targetBadge.minShifts || targetBadge.minDays || targetBadge.requiresServsafe || targetBadge.requiresHours || targetBadge.requiresBadge) && (
+        <div className="px-4 py-3 border-b border-gray-100 bg-gray-50">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Requirements</p>
+          <div className="flex flex-wrap gap-2">
+            {targetBadge.minShifts && (
+              <div className={`text-xs px-3 py-1.5 rounded-lg border font-medium ${member.total_shifts >= targetBadge.minShifts ? 'bg-green-50 border-green-200 text-green-700' : 'bg-white border-gray-200 text-gray-600'}`}>
+                {member.total_shifts}/{targetBadge.minShifts} shifts
+              </div>
+            )}
+            {targetBadge.minDays && (
+              <div className={`text-xs px-3 py-1.5 rounded-lg border font-medium ${(daysWorked ?? 0) >= targetBadge.minDays ? 'bg-green-50 border-green-200 text-green-700' : 'bg-white border-gray-200 text-gray-600'}`}>
+                {daysWorked ?? 0}/{targetBadge.minDays} days
+              </div>
+            )}
+            {targetBadge.requiresServsafe && (
+              <div className={`text-xs px-3 py-1.5 rounded-lg border font-medium ${member.servsafe_active ? 'bg-green-50 border-green-200 text-green-700' : 'bg-white border-gray-200 text-gray-600'}`}>
+                {member.servsafe_active ? '✓' : '✗'} ServSafe
+              </div>
+            )}
+            {targetBadge.requiresHours && (
+              <div className={`text-xs px-3 py-1.5 rounded-lg border font-medium ${totalHours >= targetBadge.requiresHours ? 'bg-green-50 border-green-200 text-green-700' : 'bg-white border-gray-200 text-gray-600'}`}>
+                {totalHours.toFixed(0)}/{targetBadge.requiresHours} hrs
+              </div>
+            )}
+            {targetBadge.requiresBadge && (
+              <div className={`text-xs px-3 py-1.5 rounded-lg border font-medium ${awarded.some(a => a.badge_id === targetBadge.requiresBadge) ? 'bg-green-50 border-green-200 text-green-700' : 'bg-white border-gray-200 text-gray-600'}`}>
+                {awarded.some(a => a.badge_id === targetBadge.requiresBadge) ? '✓' : '✗'} {getBadge(targetBadge.requiresBadge)?.title}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Skill rows */}
+      {targetBadge.skills.length > 0 && (
+        <div className="divide-y divide-gray-100">
+          {loading ? (
+            <p className="text-sm text-gray-400 text-center py-4">Loading…</p>
+          ) : (
+            targetBadge.skills.map(skill => (
+              <SkillRow
+                key={skill.key}
+                skill={skill}
+                progress={progress.find(p => p.badge_id === targetBadge.id && p.skill_key === skill.key)}
+                badgeId={targetBadge.id}
+                memberId={member.id}
+                isManager={isManager}
+                onUpdate={onSkillUpdate}
+              />
+            ))
+          )}
+        </div>
+      )}
+
+      {/* Award button */}
+      {meetsRequirements && isManager && (
+        <div className="px-4 py-3 border-t border-gray-100 bg-gradient-to-r from-yellow-50 to-orange-50">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-bold text-orange-800">🎉 All requirements met!</p>
+            <button
+              onClick={() => onAward(targetBadge)}
+              className="bg-orange-600 text-white text-sm font-bold px-4 py-2 rounded-lg hover:bg-orange-700"
+            >
+              Award Badge
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Career Path Row ──────────────────────────────────────────────────────────
+
+function CareerPathRow({ badges, currentBadgeId, awarded, label, color }: {
+  badges: Badge[]
+  currentBadgeId: string
+  awarded: AwardedBadge[]
+  label: string
+  color: string
+}) {
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+      <div className={`px-4 py-2.5 border-b border-gray-100 ${color}`}>
+        <h3 className="font-bold text-sm text-gray-700">{label} Career Path</h3>
+      </div>
+      <div className="divide-y divide-gray-100">
+        {badges.map((badge, idx) => {
+          const isEarned = awarded.some(a => a.badge_id === badge.id) || badge.id === currentBadgeId
+          const isCurrent = badge.id === currentBadgeId
+          const awardRecord = awarded.find(a => a.badge_id === badge.id)
+          return (
+            <div key={badge.id} className={`flex items-center gap-3 px-4 py-2.5 ${!isEarned ? 'opacity-40' : ''}`}>
+              <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${isEarned ? badgeColor(badge.id) : 'bg-gray-200 text-gray-400'}`}>
+                {isEarned ? '✓' : idx + 1}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className={`text-sm font-semibold ${isCurrent ? 'text-orange-700' : isEarned ? 'text-gray-700' : 'text-gray-400'}`}>{badge.title}</span>
+                  {isCurrent && <span className="text-xs bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-full">Current</span>}
+                </div>
+                <div className="text-xs text-gray-400">
+                  {badge.pay}{awardRecord ? ` · ${new Date(awardRecord.awarded_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}` : ''}
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 // ─── Member Detail View ───────────────────────────────────────────────────────
 
 function MemberDetail({
@@ -292,13 +470,26 @@ function MemberDetail({
   const [awarded, setAwarded] = useState<AwardedBadge[]>([])
   const [loading, setLoading] = useState(true)
   const [savingShifts, setSavingShifts] = useState(false)
-  const [savingHours, setSavingHours] = useState(false)
-  const [awardingBadge, setAwardingBadge] = useState(false)
-  const [showAwardConfirm, setShowAwardConfirm] = useState(false)
+  const [awardConfirm, setAwardConfirm] = useState<Badge | null>(null)
+  const [awarding, setAwarding] = useState(false)
 
+  const crossTrack: Track = member.track === 'BOH' ? 'FOH' : 'BOH'
+  const crossBadges = crossTrack === 'BOH' ? BOH_BADGES : FOH_BADGES
+  const primaryBadges = member.track === 'BOH' ? BOH_BADGES : FOH_BADGES
+
+  // Primary next badge
   const currentBadge = getBadge(member.current_badge)
-  const nextBadge = getNextBadge(member.current_badge, member.track)
-  const trackBadges = member.track === 'BOH' ? BOH_BADGES : FOH_BADGES
+  const nextPrimaryBadge = getNextBadge(member.current_badge, member.track)
+
+  // Cross-track: find highest earned cross badge, then get the next one
+  const nextCrossBadge = useMemo(() => {
+    let highestEarned: Badge | undefined
+    for (const b of crossBadges) {
+      if (awarded.some(a => a.badge_id === b.id)) highestEarned = b
+    }
+    if (!highestEarned) return crossBadges.find(b => b.sortOrder === 2) // first real badge
+    return crossBadges.find(b => b.sortOrder === highestEarned!.sortOrder + 1)
+  }, [awarded, crossBadges])
 
   useEffect(() => {
     async function load() {
@@ -322,34 +513,6 @@ function MemberDetail({
     })
   }
 
-  // Check if next badge requirements are met
-  const nextBadgeReady = useMemo(() => {
-    if (!nextBadge) return false
-    const daysWorked = daysSince(member.start_date)
-
-    if (nextBadge.minDays && (daysWorked ?? 0) < nextBadge.minDays) return false
-    if (nextBadge.minShifts && member.total_shifts < nextBadge.minShifts) return false
-    if (nextBadge.requiresServsafe && !member.servsafe_active) return false
-    if (nextBadge.requiresHours) {
-      const total = (member.boh_hours ?? 0) + (member.foh_hours ?? 0)
-      if (total < nextBadge.requiresHours) return false
-    }
-    if (nextBadge.requiresBadge) {
-      const hasIt = awarded.some(a => a.badge_id === nextBadge.requiresBadge)
-      if (!hasIt) return false
-    }
-    // All skills completed?
-    for (const skill of nextBadge.skills) {
-      const p = progress.find(p => p.badge_id === nextBadge.id && p.skill_key === skill.key)
-      if (skill.repsRequired === 0) {
-        if (!p?.completed) return false
-      } else {
-        if ((p?.count_done ?? 0) < skill.repsRequired) return false
-      }
-    }
-    return true
-  }, [nextBadge, member, progress, awarded])
-
   async function addShift() {
     if (!isManager) return
     setSavingShifts(true)
@@ -362,9 +525,7 @@ function MemberDetail({
   async function updateHours(field: 'boh_hours' | 'foh_hours', val: string) {
     const num = parseFloat(val)
     if (isNaN(num) || num < 0) return
-    setSavingHours(true)
     const { error } = await supabase.from('team_members').update({ [field]: num }).eq('id', member.id)
-    setSavingHours(false)
     if (!error) onUpdated({ ...member, [field]: num })
   }
 
@@ -375,32 +536,33 @@ function MemberDetail({
     if (!error) onUpdated({ ...member, servsafe_active: val })
   }
 
-  async function awardBadge() {
-    if (!isManager || !nextBadge) return
-    setAwardingBadge(true)
+  async function confirmAward(badge: Badge) {
+    if (!isManager) return
+    setAwarding(true)
+    const isPrimaryBadge = badge.track === member.track
     const { error: badgeErr } = await supabase.from('awarded_badges').insert({
       member_id: member.id,
-      badge_id: nextBadge.id,
+      badge_id: badge.id,
       shifts_at_award: member.total_shifts,
-      pay_rate: nextBadge.pay,
+      pay_rate: badge.pay,
     })
     if (!badgeErr) {
-      const { error: memberErr } = await supabase.from('team_members').update({ current_badge: nextBadge.id }).eq('id', member.id)
-      if (!memberErr) {
-        onUpdated({ ...member, current_badge: nextBadge.id })
-        const newAward: AwardedBadge = {
-          id: Date.now().toString(),
-          badge_id: nextBadge.id,
-          awarded_at: new Date().toISOString(),
-          awarded_by: null,
-          shifts_at_award: member.total_shifts,
-          pay_rate: nextBadge.pay,
-        }
-        setAwarded(prev => [newAward, ...prev])
+      // Only update current_badge for primary track awards
+      if (isPrimaryBadge) {
+        await supabase.from('team_members').update({ current_badge: badge.id }).eq('id', member.id)
+        onUpdated({ ...member, current_badge: badge.id })
       }
+      setAwarded(prev => [{
+        id: Date.now().toString(),
+        badge_id: badge.id,
+        awarded_at: new Date().toISOString(),
+        awarded_by: null,
+        shifts_at_award: member.total_shifts,
+        pay_rate: badge.pay,
+      }, ...prev])
     }
-    setAwardingBadge(false)
-    setShowAwardConfirm(false)
+    setAwarding(false)
+    setAwardConfirm(null)
   }
 
   async function deactivateMember() {
@@ -422,13 +584,9 @@ function MemberDetail({
           <div className="flex items-center gap-2 mt-1 flex-wrap">
             <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${trackColor(member.track)}`}>{member.track}</span>
             {currentBadge && (
-              <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${badgeColor(member.current_badge)}`}>
-                {currentBadge.title}
-              </span>
+              <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${badgeColor(member.current_badge)}`}>{currentBadge.title}</span>
             )}
-            {currentBadge && (
-              <span className="text-xs text-gray-500">{currentBadge.pay}</span>
-            )}
+            {currentBadge && <span className="text-xs text-gray-500">{currentBadge.pay}</span>}
             {!member.active && <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">Inactive</span>}
           </div>
         </div>
@@ -440,11 +598,7 @@ function MemberDetail({
           <div className="text-2xl font-bold text-gray-900">{member.total_shifts}</div>
           <div className="text-xs text-gray-500 mt-0.5">Total Shifts</div>
           {isManager && (
-            <button
-              onClick={addShift}
-              disabled={savingShifts}
-              className="mt-2 text-xs bg-orange-100 text-orange-700 px-3 py-1 rounded-full hover:bg-orange-200 disabled:opacity-50"
-            >
+            <button onClick={addShift} disabled={savingShifts} className="mt-2 text-xs bg-orange-100 text-orange-700 px-3 py-1 rounded-full hover:bg-orange-200 disabled:opacity-50">
               + Add Shift
             </button>
           )}
@@ -461,189 +615,97 @@ function MemberDetail({
           <div className="text-xs text-gray-500 mt-0.5">Total Hours</div>
           {isManager && (
             <div className="flex gap-1 mt-2 justify-center">
-              <input
-                type="number"
-                min="0"
-                defaultValue={member.boh_hours}
-                onBlur={e => updateHours('boh_hours', e.target.value)}
-                className="w-14 text-xs border border-gray-200 rounded px-1 py-0.5 text-center"
-                placeholder="BOH"
-                title="BOH hours"
-              />
-              <input
-                type="number"
-                min="0"
-                defaultValue={member.foh_hours}
-                onBlur={e => updateHours('foh_hours', e.target.value)}
-                className="w-14 text-xs border border-gray-200 rounded px-1 py-0.5 text-center"
-                placeholder="FOH"
-                title="FOH hours"
-              />
+              <input type="number" min="0" defaultValue={member.boh_hours} onBlur={e => updateHours('boh_hours', e.target.value)} className="w-14 text-xs border border-gray-200 rounded px-1 py-0.5 text-center" placeholder="BOH" title="BOH hours" />
+              <input type="number" min="0" defaultValue={member.foh_hours} onBlur={e => updateHours('foh_hours', e.target.value)} className="w-14 text-xs border border-gray-200 rounded px-1 py-0.5 text-center" placeholder="FOH" title="FOH hours" />
             </div>
           )}
         </div>
         <div className={`border rounded-xl p-3 text-center ${member.servsafe_active ? 'bg-green-50 border-green-200' : 'bg-white border-gray-200'}`}>
-          <div className={`text-2xl font-bold ${member.servsafe_active ? 'text-green-600' : 'text-gray-400'}`}>
-            {member.servsafe_active ? '✓' : '✗'}
-          </div>
+          <div className={`text-2xl font-bold ${member.servsafe_active ? 'text-green-600' : 'text-gray-400'}`}>{member.servsafe_active ? '✓' : '✗'}</div>
           <div className="text-xs text-gray-500 mt-0.5">ServSafe</div>
           {isManager && (
-            <button
-              onClick={toggleServsafe}
-              className={`mt-2 text-xs px-3 py-1 rounded-full ${member.servsafe_active ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
-            >
+            <button onClick={toggleServsafe} className={`mt-2 text-xs px-3 py-1 rounded-full ${member.servsafe_active ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
               {member.servsafe_active ? 'Active' : 'Mark Active'}
             </button>
           )}
         </div>
       </div>
 
-      {/* Award badge banner */}
-      {nextBadge && nextBadgeReady && isManager && (
-        <div className="bg-gradient-to-r from-yellow-400 to-orange-500 rounded-xl p-4 flex items-center justify-between shadow-md">
-          <div>
-            <p className="font-bold text-white text-lg">🎉 Ready for {nextBadge.title}!</p>
-            <p className="text-yellow-100 text-sm">All requirements met — {nextBadge.pay}</p>
-          </div>
-          <button
-            onClick={() => setShowAwardConfirm(true)}
-            className="bg-white text-orange-600 font-bold px-4 py-2 rounded-lg hover:bg-yellow-50 text-sm"
-          >
-            Award Badge
-          </button>
-        </div>
+      {/* ── Primary track badge section ── */}
+      {nextPrimaryBadge && (
+        <BadgeSection
+          targetBadge={nextPrimaryBadge}
+          isPrimary={true}
+          member={member}
+          progress={progress}
+          awarded={awarded}
+          loading={loading}
+          isManager={isManager}
+          onSkillUpdate={handleSkillUpdate}
+          onAward={b => setAwardConfirm(b)}
+        />
       )}
 
-      {/* Next badge requirements */}
-      {nextBadge && (
-        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-          <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-            <div>
-              <h2 className="font-bold text-gray-800">Working toward: {nextBadge.title}</h2>
-              <p className="text-xs text-gray-500 mt-0.5">{nextBadge.pay} · {nextBadge.notes}</p>
-            </div>
-          </div>
-
-          {/* Minimums */}
-          {(nextBadge.minShifts || nextBadge.minDays || nextBadge.requiresServsafe || nextBadge.requiresHours || nextBadge.requiresBadge) && (
-            <div className="px-4 py-3 border-b border-gray-100 bg-gray-50">
-              <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">Requirements</p>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                {nextBadge.minShifts && (
-                  <div className={`text-xs px-3 py-2 rounded-lg border ${member.total_shifts >= nextBadge.minShifts ? 'bg-green-50 border-green-200 text-green-700' : 'bg-white border-gray-200 text-gray-600'}`}>
-                    <span className="font-semibold">{member.total_shifts}/{nextBadge.minShifts}</span> shifts
-                  </div>
-                )}
-                {nextBadge.minDays && (
-                  <div className={`text-xs px-3 py-2 rounded-lg border ${(daysWorked ?? 0) >= nextBadge.minDays ? 'bg-green-50 border-green-200 text-green-700' : 'bg-white border-gray-200 text-gray-600'}`}>
-                    <span className="font-semibold">{daysWorked ?? 0}/{nextBadge.minDays}</span> days
-                  </div>
-                )}
-                {nextBadge.requiresServsafe && (
-                  <div className={`text-xs px-3 py-2 rounded-lg border ${member.servsafe_active ? 'bg-green-50 border-green-200 text-green-700' : 'bg-white border-gray-200 text-gray-600'}`}>
-                    {member.servsafe_active ? '✓' : '✗'} ServSafe
-                  </div>
-                )}
-                {nextBadge.requiresHours && (
-                  <div className={`text-xs px-3 py-2 rounded-lg border ${totalHours >= nextBadge.requiresHours ? 'bg-green-50 border-green-200 text-green-700' : 'bg-white border-gray-200 text-gray-600'}`}>
-                    <span className="font-semibold">{totalHours.toFixed(0)}/{nextBadge.requiresHours}</span> hrs
-                  </div>
-                )}
-                {nextBadge.requiresBadge && (
-                  <div className={`text-xs px-3 py-2 rounded-lg border ${awarded.some(a => a.badge_id === nextBadge.requiresBadge) ? 'bg-green-50 border-green-200 text-green-700' : 'bg-white border-gray-200 text-gray-600'}`}>
-                    {awarded.some(a => a.badge_id === nextBadge.requiresBadge) ? '✓' : '✗'} {getBadge(nextBadge.requiresBadge)?.title ?? nextBadge.requiresBadge}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Skills — flush rows like the physical sheet */}
-          {nextBadge.skills.length > 0 && (
-            <div className="divide-y divide-gray-100">
-              {loading ? (
-                <p className="text-sm text-gray-400 text-center py-4">Loading progress…</p>
-              ) : (
-                nextBadge.skills.map(skill => (
-                  <SkillRow
-                    key={skill.key}
-                    skill={skill}
-                    progress={progress.find(p => p.badge_id === nextBadge.id && p.skill_key === skill.key)}
-                    badgeId={nextBadge.id}
-                    memberId={member.id}
-                    isManager={isManager}
-                    onUpdate={handleSkillUpdate}
-                  />
-                ))
-              )}
-            </div>
-          )}
-        </div>
+      {/* ── Cross-training section (other track) ── */}
+      {nextCrossBadge && (
+        <BadgeSection
+          targetBadge={nextCrossBadge}
+          isPrimary={false}
+          member={member}
+          progress={progress}
+          awarded={awarded}
+          loading={loading}
+          isManager={isManager}
+          onSkillUpdate={handleSkillUpdate}
+          onAward={b => setAwardConfirm(b)}
+        />
       )}
 
-      {/* Full track progress */}
-      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-gray-100">
-          <h2 className="font-bold text-gray-800">{member.track} Career Path</h2>
-        </div>
-        <div className="divide-y divide-gray-100">
-          {trackBadges.map((badge, idx) => {
-            const isEarned = badge.sortOrder < (currentBadge?.sortOrder ?? 0) || badge.id === member.current_badge
-            const awardRecord = awarded.find(a => a.badge_id === badge.id)
-            return (
-              <div key={badge.id} className={`flex items-center gap-4 px-4 py-3 ${isEarned ? '' : 'opacity-50'}`}>
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 ${isEarned ? badgeColor(badge.id) : 'bg-gray-200 text-gray-400'}`}>
-                  {isEarned ? '✓' : idx + 1}
-                </div>
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className={`font-semibold text-sm ${badge.id === member.current_badge ? 'text-orange-700' : isEarned ? 'text-gray-700' : 'text-gray-400'}`}>
-                      {badge.title}
-                    </span>
-                    {badge.id === member.current_badge && (
-                      <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-medium">Current</span>
-                    )}
-                  </div>
-                  <div className="text-xs text-gray-400 mt-0.5">
-                    {badge.pay}
-                    {awardRecord && ` · Awarded ${new Date(awardRecord.awarded_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`}
-                  </div>
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      </div>
+      {/* ── Career paths side by side ── */}
+      <CareerPathRow
+        badges={primaryBadges}
+        currentBadgeId={member.current_badge}
+        awarded={awarded}
+        label={member.track}
+        color="bg-orange-50"
+      />
+      <CareerPathRow
+        badges={crossBadges}
+        currentBadgeId=""
+        awarded={awarded}
+        label={crossTrack}
+        color="bg-sky-50"
+      />
 
       {/* Deactivate */}
       {isManager && member.active && (
         <div className="pt-2">
-          <button
-            onClick={deactivateMember}
-            className="text-xs text-red-500 hover:text-red-700 hover:underline"
-          >
+          <button onClick={deactivateMember} className="text-xs text-red-500 hover:text-red-700 hover:underline">
             Mark as inactive / no longer employed
           </button>
         </div>
       )}
 
       {/* Award confirm modal */}
-      {showAwardConfirm && nextBadge && (
+      {awardConfirm && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 space-y-4 text-center">
             <div className="text-4xl">🏅</div>
-            <h2 className="text-lg font-bold text-gray-800">Award {nextBadge.title}?</h2>
+            <h2 className="text-lg font-bold text-gray-800">Award {awardConfirm.title}?</h2>
             <p className="text-sm text-gray-600">
-              This will promote <strong>{member.name}</strong> to <strong>{nextBadge.title}</strong> ({nextBadge.pay}) and record the badge in their history.
+              This will award <strong>{member.name}</strong> the <strong>{awardConfirm.title}</strong> badge ({awardConfirm.pay}) and record it in their history.
+              {awardConfirm.track !== member.track && (
+                <span className="block mt-1 text-sky-600 font-medium">Cross-training badge — does not change primary pay rate.</span>
+              )}
             </p>
             <div className="flex gap-3 pt-2">
-              <button onClick={() => setShowAwardConfirm(false)} className="flex-1 py-2 rounded border border-gray-300 text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
+              <button onClick={() => setAwardConfirm(null)} className="flex-1 py-2 rounded border border-gray-300 text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
               <button
-                onClick={awardBadge}
-                disabled={awardingBadge}
+                onClick={() => confirmAward(awardConfirm)}
+                disabled={awarding}
                 className="flex-1 py-2 rounded bg-orange-600 text-white text-sm font-bold hover:bg-orange-700 disabled:opacity-50"
               >
-                {awardingBadge ? 'Awarding…' : '🎉 Confirm'}
+                {awarding ? 'Awarding…' : '🎉 Confirm'}
               </button>
             </div>
           </div>
