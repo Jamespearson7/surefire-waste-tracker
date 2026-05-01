@@ -38,29 +38,22 @@ export async function getToastToken(): Promise<string> {
   return token
 }
 
-// Get restaurant GUID(s) accessible with these credentials
+// Get restaurant GUID — uses env var if set, otherwise discovers via partners API
 export async function getRestaurantGuid(): Promise<string> {
   const stored = process.env.TOAST_RESTAURANT_GUID
   if (stored) return stored
 
   const token = await getToastToken()
-  const res = await fetch(`${TOAST_BASE}/restaurants/v1/groups`, {
+
+  // partners/v1/restaurants returns all restaurants linked to these credentials
+  const res = await fetch(`${TOAST_BASE}/partners/v1/restaurants`, {
     headers: { Authorization: `Bearer ${token}` },
   })
 
   if (res.ok) {
     const data = await res.json()
-    const guid = data?.[0]?.restaurants?.[0]?.guid ?? data?.[0]?.guid
-    if (guid) return guid as string
-  }
-
-  // Fallback: try restaurants endpoint directly
-  const res2 = await fetch(`${TOAST_BASE}/restaurants/v1/restaurants`, {
-    headers: { Authorization: `Bearer ${token}` },
-  })
-  if (res2.ok) {
-    const data2 = await res2.json()
-    const guid = Array.isArray(data2) ? data2[0]?.guid : data2?.guid
+    const list = Array.isArray(data) ? data : []
+    const guid = list[0]?.restaurantGuid
     if (guid) return guid as string
   }
 
