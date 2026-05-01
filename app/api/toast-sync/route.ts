@@ -7,34 +7,32 @@ import {
   getToastJobs,
 } from '@/lib/toast-client'
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Surefire job title → track mapping ──────────────────────────────────────
+// Based on actual Toast job titles at Surefire Market - Camp North End
 
-// Guess BOH vs FOH from job title
-function inferTrack(jobTitle: string): 'BOH' | 'FOH' | null {
+function inferTrack(jobTitle: string): 'BOH' | 'FOH' {
   const t = jobTitle.toLowerCase()
-  const bohKeywords = ['cook', 'kitchen', 'prep', 'dish', 'expo', 'grill', 'fryer', 'line', 'boh', 'back of house']
-  const fohKeywords = ['cashier', 'register', 'floor', 'market', 'front', 'foh', 'server', 'barista', 'coffee', 'deli', 'customer']
-  if (bohKeywords.some(k => t.includes(k))) return 'BOH'
-  if (fohKeywords.some(k => t.includes(k))) return 'FOH'
-  return null
-}
 
-// Hours between two ISO datetime strings
-function hoursFromEntry(entry: { inDate?: string; outDate?: string; regularHours?: number; overtimeHours?: number }): number {
-  if (entry.regularHours !== undefined) {
-    return (entry.regularHours ?? 0) + (entry.overtimeHours ?? 0)
-  }
-  if (entry.inDate && entry.outDate) {
-    const ms = new Date(entry.outDate).getTime() - new Date(entry.inDate).getTime()
-    return ms / 3_600_000
-  }
-  return 0
+  // Explicit BOH jobs at Surefire
+  const boh = [
+    'builder', 'boh expo', 'boh train', 'chef', 'prep', 'dish',
+    'fryer', 'flat top', 'flattop', 'cook', 'shake station', 'expo',
+    'kitchen', 'grill', 'line',
+  ]
+  // Explicit FOH jobs at Surefire
+  const foh = [
+    'cashier', 'host', 'server', 'barback', 'runner', 'bartender',
+    'market floor', 'floor', 'register', 'front',
+  ]
+
+  if (boh.some(k => t.includes(k))) return 'BOH'
+  if (foh.some(k => t.includes(k))) return 'FOH'
+
+  // Management/unknown — default BOH (most common at Surefire)
+  return 'BOH'
 }
 
 // ─── POST /api/toast-sync ─────────────────────────────────────────────────────
-// Called by the "Sync from Toast" button on the Team page.
-// Also safe to call from the nightly cron.
-// Body: { daysBack?: number }  (default 365 — full history on first run)
 
 export async function POST(req: NextRequest) {
   const { NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, NEXT_PUBLIC_SUPABASE_ANON_KEY } = process.env
@@ -52,10 +50,8 @@ export async function POST(req: NextRequest) {
   )
 
   try {
-    // 1. Get restaurant GUID
     const restaurantGuid = await getRestaurantGuid()
 
-    // 2. Fetch employees, jobs, and time entries in parallel
     const endDate   = new Date().toISOString().slice(0, 10)
     const startDate = new Date(Date.now() - daysBack * 86_400_000).toISOString().slice(0, 10)
 
@@ -65,121 +61,118 @@ export async function POST(req: NextRequest) {
       getToastTimeEntries(restaurantGuid, startDate, endDate),
     ])
 
-    const employees = Array.isArray(rawEmployees) ? rawEmployees : rawEmployees?.employees ?? []
-    const jobs      = Array.isArray(rawJobs) ? rawJobs : rawJobs?.jobs ?? []
+    // Toast returns arrays directly for these endpoints
+    const employees = Array.isArray(rawEmployees) ? rawEmployees : []
+    const jobs      = Array.isArray(rawJobs)      ? rawJobs      : []
 
-    // Build job guid → title map
+    // job guid → title
     const jobMap: Record<string, string> = {}
     for (const job of jobs) {
       if (job.guid && job.title) jobMap[job.guid] = job.title
     }
 
-    // 3. Tally hours and shifts per employee guid
-    type ToastEntry = { employee?: { guid?: string }; employeeGuid?: string; job?: { guid?: string }; jobGuid?: string; inDate?: string; outDate?: string; clockInDate?: string; regularHours?: number; overtimeHours?: number }
-    type Tally = { bohHours: number; fohHours: number; shifts: Set<string>; startDate: string | null }
+    // ── Tally hours and shifts per employee ───────────────────────────────────
+    // Toast time entry shape (confirmed from live API):
+    //   employeeReference.guid  — employee
+    //   jobReference.guid       — job
+    //   regularHours            — decimal hours
+    //   overtimeHours           — decimal hours
+    //   businessDate            — "YYYYMMDD" string (local business date)
+
+    type Tally = {
+      bohHours: number
+      fohHours: number
+      shifts: Set<string>   // unique businessDate strings
+    }
     const tally: Record<string, Tally> = {}
 
-    for (const rawEntry of timeEntries) {
-      const entry = rawEntry as ToastEntry
-      const empGuid = entry.employee?.guid ?? entry.employeeGuid
+    for (const e of timeEntries as Record<string, unknown>[]) {
+      const empGuid = (e.employeeReference as Record<string, string> | null)?.guid
       if (!empGuid) continue
+      if (e.deleted === true) continue
 
-      if (!tally[empGuid]) tally[empGuid] = { bohHours: 0, fohHours: 0, shifts: new Set(), startDate: null }
+      if (!tally[empGuid]) tally[empGuid] = { bohHours: 0, fohHours: 0, shifts: new Set() }
 
-      const hours    = hoursFromEntry(entry)
-      const jobTitle = jobMap[entry.job?.guid ?? entry.jobGuid ?? ''] ?? ''
-      const track    = inferTrack(jobTitle)
+      const hours = ((e.regularHours as number) ?? 0) + ((e.overtimeHours as number) ?? 0)
+      const jobGuid = (e.jobReference as Record<string, string> | null)?.guid ?? ''
+      const jobTitle = jobMap[jobGuid] ?? ''
+      const track = inferTrack(jobTitle)
 
       if (track === 'BOH') tally[empGuid].bohHours += hours
-      else if (track === 'FOH') tally[empGuid].fohHours += hours
-      else {
-        // unknown job — split evenly or add to both
-        tally[empGuid].bohHours += hours / 2
-        tally[empGuid].fohHours += hours / 2
-      }
+      else                 tally[empGuid].fohHours += hours
 
-      // Count each calendar date worked as 1 shift
-      const dateWorked = (entry.inDate ?? entry.clockInDate ?? '').slice(0, 10)
-      if (dateWorked) tally[empGuid].shifts.add(dateWorked)
+      // businessDate is "YYYYMMDD" — each unique date = 1 shift
+      const bd = e.businessDate as string
+      if (bd && bd.length === 8) {
+        tally[empGuid].shifts.add(bd)
+      } else {
+        // fallback to inDate
+        const inDate = (e.inDate as string | null)?.slice(0, 10)
+        if (inDate) tally[empGuid].shifts.add(inDate)
+      }
     }
 
-    // 4. Upsert team_members
+    // ── Upsert team_members ───────────────────────────────────────────────────
     let created = 0
     let updated = 0
     const errors: string[] = []
+    const skipped: string[] = []
 
-    for (const emp of employees) {
-      if (!emp.guid) continue
+    for (const emp of employees as Record<string, unknown>[]) {
+      const guid = emp.guid as string
+      if (!guid) continue
 
-      const firstName = emp.firstName ?? emp.first_name ?? ''
-      const lastName  = emp.lastName  ?? emp.last_name  ?? ''
+      const firstName = (emp.firstName as string) ?? ''
+      const lastName  = (emp.lastName  as string) ?? ''
       const fullName  = `${firstName} ${lastName}`.trim()
-      if (!fullName) continue
 
-      const isActive = emp.deleted === false || emp.status === 'ACTIVE' || emp.status === undefined
+      // Skip system/placeholder accounts
+      if (!fullName || fullName === 'Default Online Ordering') { skipped.push(fullName || guid); continue }
 
-      // Determine primary track from most hours or first job
-      const empTally  = tally[emp.guid]
-      const bohH      = empTally?.bohHours ?? 0
-      const fohH      = empTally?.fohHours ?? 0
+      const isActive  = emp.deleted === false
+      const empTally  = tally[guid]
+      const bohH      = Math.round((empTally?.bohHours ?? 0) * 10) / 10
+      const fohH      = Math.round((empTally?.fohHours ?? 0) * 10) / 10
+      const shifts    = empTally?.shifts.size ?? 0
       const track: 'BOH' | 'FOH' = bohH >= fohH ? 'BOH' : 'FOH'
-      const totalShifts = empTally?.shifts.size ?? 0
 
-      // External ID stored so we can match on future syncs
-      const externalId = emp.guid
+      // Start date: use createdDate (earliest available in Toast for this employee)
+      const startDate = emp.createdDate
+        ? (emp.createdDate as string).slice(0, 10)
+        : null
 
-      // Check if member already exists (match by toast_guid or name)
+      // Check for existing record by toast_guid
       const { data: existing } = await db
         .from('team_members')
-        .select('id, current_badge, boh_hours, foh_hours, total_shifts')
-        .eq('toast_guid', externalId)
+        .select('id, boh_hours, foh_hours, total_shifts')
+        .eq('toast_guid', guid)
         .maybeSingle()
 
       if (existing) {
-        // Update hours and shifts — take the higher of Toast vs manual
         const { error } = await db.from('team_members').update({
           name:         fullName,
           active:       isActive,
           boh_hours:    Math.max(bohH, existing.boh_hours ?? 0),
           foh_hours:    Math.max(fohH, existing.foh_hours ?? 0),
-          total_shifts: Math.max(totalShifts, existing.total_shifts ?? 0),
+          total_shifts: Math.max(shifts, existing.total_shifts ?? 0),
         }).eq('id', existing.id)
         if (error) errors.push(`update ${fullName}: ${error.message}`)
         else updated++
       } else {
-        // New member — create with entry-level badge
         const defaultBadge = track === 'BOH' ? 'boh_team_member' : 'foh_team_member'
-        const hireDate = emp.hireDate ?? emp.hire_date ?? null
-
         const { error } = await db.from('team_members').insert({
           name:          fullName,
           track,
           current_badge: defaultBadge,
-          start_date:    hireDate ? hireDate.slice(0, 10) : null,
-          boh_hours:     Math.round(bohH * 10) / 10,
-          foh_hours:     Math.round(fohH * 10) / 10,
-          total_shifts:  totalShifts,
+          start_date:    startDate,
+          boh_hours:     bohH,
+          foh_hours:     fohH,
+          total_shifts:  shifts,
           active:        isActive,
-          toast_guid:    externalId,
+          toast_guid:    guid,
         })
-        if (error) {
-          // toast_guid column may not exist yet — retry without it
-          if (error.message.includes('toast_guid')) {
-            const { error: e2 } = await db.from('team_members').insert({
-              name: fullName, track, current_badge: defaultBadge,
-              start_date: hireDate ? hireDate.slice(0, 10) : null,
-              boh_hours: Math.round(bohH * 10) / 10,
-              foh_hours: Math.round(fohH * 10) / 10,
-              total_shifts: totalShifts, active: isActive,
-            })
-            if (e2) errors.push(`insert ${fullName}: ${e2.message}`)
-            else created++
-          } else {
-            errors.push(`insert ${fullName}: ${error.message}`)
-          }
-        } else {
-          created++
-        }
+        if (error) errors.push(`insert ${fullName}: ${error.message}`)
+        else created++
       }
     }
 
@@ -187,8 +180,10 @@ export async function POST(req: NextRequest) {
       ok: true,
       restaurantGuid,
       employeesFromToast: employees.length,
+      timeEntriesProcessed: (timeEntries as unknown[]).length,
       created,
       updated,
+      skipped: skipped.length,
       errors: errors.length ? errors : undefined,
     })
   } catch (err: unknown) {
@@ -197,7 +192,7 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// GET — quick connection test, returns restaurant info
+// GET — connection test
 export async function GET() {
   if (!process.env.TOAST_CLIENT_ID || !process.env.TOAST_CLIENT_SECRET) {
     return NextResponse.json({ ok: false, error: 'Toast credentials not configured.' }, { status: 500 })
