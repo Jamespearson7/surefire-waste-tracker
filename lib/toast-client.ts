@@ -73,27 +73,49 @@ export async function getToastEmployees(restaurantGuid: string) {
   return res.json()
 }
 
-// Fetch time entries for a date range
+// Fetch time entries — Toast max window is 30 days, so we chunk automatically
 export async function getToastTimeEntries(
   restaurantGuid: string,
   startDate: string,  // YYYY-MM-DD
   endDate: string,
 ) {
-  const token = await getToastToken()
-  // Toast expects ISO datetime
-  const startDt = `${startDate}T00:00:00.000+0000`
-  const endDt   = `${endDate}T23:59:59.000+0000`
+  const token  = await getToastToken()
+  const allEntries: unknown[] = []
 
-  const url = `${TOAST_BASE}/labor/v1/timeEntries?startDate=${encodeURIComponent(startDt)}&endDate=${encodeURIComponent(endDt)}&pageSize=500`
+  const start = new Date(startDate + 'T00:00:00Z')
+  const end   = new Date(endDate   + 'T23:59:59Z')
+  const CHUNK_DAYS = 29 // stay under the 30-day limit
 
-  const res = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Toast-Restaurant-External-ID': restaurantGuid,
-    },
-  })
-  if (!res.ok) throw new Error(`Toast timeEntries ${res.status}: ${await res.text()}`)
-  return res.json()
+  let chunkStart = new Date(start)
+
+  while (chunkStart < end) {
+    const chunkEnd = new Date(chunkStart)
+    chunkEnd.setDate(chunkEnd.getDate() + CHUNK_DAYS)
+    if (chunkEnd > end) chunkEnd.setTime(end.getTime())
+
+    const startDt = chunkStart.toISOString().replace(/\.\d{3}Z$/, '.000+0000')
+    const endDt   = chunkEnd.toISOString().replace(/\.\d{3}Z$/, '.000+0000')
+    const url = `${TOAST_BASE}/labor/v1/timeEntries?startDate=${encodeURIComponent(startDt)}&endDate=${encodeURIComponent(endDt)}&pageSize=500`
+
+    const res = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Toast-Restaurant-External-ID': restaurantGuid,
+      },
+    })
+
+    if (!res.ok) throw new Error(`Toast timeEntries ${res.status}: ${await res.text()}`)
+
+    const data = await res.json()
+    const entries = Array.isArray(data) ? data : data?.timeEntries ?? []
+    allEntries.push(...entries)
+
+    // advance to next chunk
+    chunkStart = new Date(chunkEnd)
+    chunkStart.setDate(chunkStart.getDate() + 1)
+  }
+
+  return allEntries
 }
 
 // Fetch job info (to determine BOH vs FOH)

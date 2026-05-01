@@ -59,15 +59,14 @@ export async function POST(req: NextRequest) {
     const endDate   = new Date().toISOString().slice(0, 10)
     const startDate = new Date(Date.now() - daysBack * 86_400_000).toISOString().slice(0, 10)
 
-    const [rawEmployees, rawJobs, rawTimeEntries] = await Promise.all([
+    const [rawEmployees, rawJobs, timeEntries] = await Promise.all([
       getToastEmployees(restaurantGuid),
       getToastJobs(restaurantGuid),
       getToastTimeEntries(restaurantGuid, startDate, endDate),
     ])
 
-    const employees   = Array.isArray(rawEmployees) ? rawEmployees : rawEmployees?.employees ?? []
-    const jobs        = Array.isArray(rawJobs) ? rawJobs : rawJobs?.jobs ?? []
-    const timeEntries = Array.isArray(rawTimeEntries) ? rawTimeEntries : rawTimeEntries?.timeEntries ?? []
+    const employees = Array.isArray(rawEmployees) ? rawEmployees : rawEmployees?.employees ?? []
+    const jobs      = Array.isArray(rawJobs) ? rawJobs : rawJobs?.jobs ?? []
 
     // Build job guid → title map
     const jobMap: Record<string, string> = {}
