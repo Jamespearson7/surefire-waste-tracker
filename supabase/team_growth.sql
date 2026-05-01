@@ -62,3 +62,27 @@ create policy "allow_all_awarded_badges" on awarded_badges for all using (true) 
 -- Add Toast integration column (run if upgrading from initial schema)
 alter table team_members add column if not exists toast_guid text unique;
 create index if not exists idx_team_members_toast_guid on team_members(toast_guid);
+
+-- ── Attendance events & progress freeze (page 6 of growth path) ──────────────
+
+create table if not exists attendance_events (
+  id           uuid primary key default gen_random_uuid(),
+  created_at   timestamptz default now(),
+  member_id    uuid not null references team_members(id) on delete cascade,
+  event_type   text not null check (event_type in ('ncns','callout','late','writeup','pip')),
+  event_date   date not null default current_date,
+  notes        text,
+  logged_by    text,
+  resolved     boolean not null default false,
+  resolved_date date,
+  resolved_by  text
+);
+
+create index if not exists idx_attendance_member on attendance_events(member_id);
+create index if not exists idx_attendance_date   on attendance_events(event_date);
+
+alter table team_members add column if not exists progress_frozen boolean not null default false;
+alter table team_members add column if not exists freeze_reason   text;
+
+alter table attendance_events enable row level security;
+create policy "allow_all_attendance" on attendance_events for all using (true) with check (true);

@@ -24,6 +24,18 @@ type TeamMember = {
   notes: string | null
   active: boolean
   hidden: boolean
+  progress_frozen: boolean
+  freeze_reason: string | null
+}
+
+type AttendanceEvent = {
+  id: string
+  event_type: 'ncns' | 'callout' | 'late' | 'writeup' | 'pip'
+  event_date: string
+  notes: string | null
+  logged_by: string | null
+  resolved: boolean
+  resolved_date: string | null
 }
 
 type SkillProgress = {
@@ -279,6 +291,251 @@ function SkillRow({
   )
 }
 
+// ─── Attendance Section ───────────────────────────────────────────────────────
+
+const EVENT_LABELS: Record<string, string> = {
+  ncns:    'No-Call No-Show',
+  callout: 'Call-Out',
+  late:    'Late Arrival',
+  writeup: 'Write-Up / Warning',
+  pip:     'PIP',
+}
+const EVENT_COLORS: Record<string, string> = {
+  ncns:    'bg-red-100 text-red-800 border-red-200',
+  callout: 'bg-orange-100 text-orange-800 border-orange-200',
+  late:    'bg-yellow-100 text-yellow-800 border-yellow-200',
+  writeup: 'bg-purple-100 text-purple-800 border-purple-200',
+  pip:     'bg-gray-100 text-gray-800 border-gray-200',
+}
+
+function AttendanceSection({
+  member, events, isManager, onEventsChanged, onFreezeChanged,
+}: {
+  member: TeamMember
+  events: AttendanceEvent[]
+  isManager: boolean
+  onEventsChanged: (events: AttendanceEvent[]) => void
+  onFreezeChanged: (frozen: boolean, reason: string | null) => void
+}) {
+  const [logging, setLogging] = useState(false)
+  const [logType, setLogType] = useState<string | null>(null)
+  const [logNotes, setLogNotes] = useState('')
+  const [logDate, setLogDate] = useState(new Date().toISOString().slice(0, 10))
+  const [saving, setSaving] = useState(false)
+
+  // Rolling 90-day counts
+  const cutoff = new Date()
+  cutoff.setDate(cutoff.getDate() - 90)
+  const cutoffStr = cutoff.toISOString().slice(0, 10)
+
+  const window90 = events.filter(e => !e.resolved && e.event_date >= cutoffStr)
+  const ncns90    = window90.filter(e => e.event_type === 'ncns').length
+  const callout90 = window90.filter(e => e.event_type === 'callout').length
+  const late90    = window90.filter(e => e.event_type === 'late').length
+  const hasActiveWriteup = events.some(e => !e.resolved && (e.event_type === 'writeup' || e.event_type === 'pip'))
+
+  // Determine if freeze/termination should be triggered
+  const shouldFreeze =
+    ncns90 >= 3 || callout90 >= 3 || late90 >= 3 || hasActiveWriteup
+  const shouldTerminate =
+    ncns90 >= 3 || (ncns90 >= 1 && member.progress_frozen) ||
+    (ncns90 >= 3 && callout90 >= 3 && late90 >= 3)
+
+  async function logEvent() {
+    if (!logType) return
+    setSaving(true)
+    const { data, error } = await supabase.from('attendance_events').insert({
+      member_id:  member.id,
+      event_type: logType,
+      event_date: logDate,
+      notes:      logNotes.trim() || null,
+    }).select().single()
+
+    if (!error && data) {
+      const newEvents = [data as AttendanceEvent, ...events]
+      onEventsChanged(newEvents)
+
+      // Auto-freeze if threshold hit
+      const newNcns    = newEvents.filter(e => !e.resolved && e.event_date >= cutoffStr && e.event_type === 'ncns').length
+      const newCallout = newEvents.filter(e => !e.resolved && e.event_date >= cutoffStr && e.event_type === 'callout').length
+      const newLate    = newEvents.filter(e => !e.resolved && e.event_date >= cutoffStr && e.event_type === 'late').length
+      const newWriteup = newEvents.some(e => !e.resolved && (e.event_type === 'writeup' || e.event_type === 'pip'))
+
+      if (newNcns >= 3 || newCallout >= 3 || newLate >= 3 || newWriteup) {
+        let reason = ''
+        if (newNcns >= 3) reason = '3 no-call no-shows in 90 days'
+        else if (newCallout >= 3) reason = '3 call-outs in 90 days'
+        else if (newLate >= 3) reason = '3 late arrivals in 90 days'
+        else if (newWriteup) reason = 'Active write-up or PIP'
+        await supabase.from('team_members').update({ progress_frozen: true, freeze_reason: reason }).eq('id', member.id)
+        onFreezeChanged(true, reason)
+      }
+    }
+    setLogging(false)
+    setLogType(null)
+    setLogNotes('')
+    setSaving(false)
+  }
+
+  async function resolveEvent(eventId: string) {
+    const today = new Date().toISOString().slice(0, 10)
+    const { error } = await supabase.from('attendance_events').update({ resolved: true, resolved_date: today }).eq('id', eventId)
+    if (!error) {
+      const updated = events.map(e => e.id === eventId ? { ...e, resolved: true, resolved_date: today } : e)
+      onEventsChanged(updated)
+
+      // Re-check if member can be unfrozen
+      const newWindow = updated.filter(e => !e.resolved && e.event_date >= cutoffStr)
+      const stillBad  = newWindow.some(e => e.event_type === 'ncns') && newWindow.filter(e => e.event_type === 'ncns').length >= 3
+        || newWindow.filter(e => e.event_type === 'callout').length >= 3
+        || newWindow.filter(e => e.event_type === 'late').length >= 3
+        || updated.some(e => !e.resolved && (e.event_type === 'writeup' || e.event_type === 'pip'))
+      if (!stillBad && member.progress_frozen) {
+        await supabase.from('team_members').update({ progress_frozen: false, freeze_reason: null }).eq('id', member.id)
+        onFreezeChanged(false, null)
+      }
+    }
+  }
+
+  async function manualUnfreeze() {
+    await supabase.from('team_members').update({ progress_frozen: false, freeze_reason: null }).eq('id', member.id)
+    onFreezeChanged(false, null)
+  }
+
+  const recentEvents = events.slice(0, 20)
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+      <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between bg-gray-50">
+        <h2 className="font-bold text-gray-800">Attendance (90-Day Window)</h2>
+        {isManager && !logging && (
+          <button
+            onClick={() => setLogging(true)}
+            className="text-xs bg-orange-600 text-white px-3 py-1.5 rounded-lg hover:bg-orange-700 font-medium"
+          >
+            + Log Event
+          </button>
+        )}
+      </div>
+
+      {/* 90-day scoreboard */}
+      <div className="grid grid-cols-3 divide-x divide-gray-100 border-b border-gray-100">
+        {[
+          { label: 'No-Call No-Shows', count: ncns90, limit: 3, type: 'ncns' },
+          { label: 'Call-Outs', count: callout90, limit: 3, type: 'callout' },
+          { label: 'Late Arrivals', count: late90, limit: 3, type: 'late' },
+        ].map(({ label, count, limit, type }) => (
+          <div key={type} className={`p-3 text-center ${count >= limit ? 'bg-red-50' : count >= 2 ? 'bg-yellow-50' : ''}`}>
+            <div className={`text-2xl font-bold ${count >= limit ? 'text-red-600' : count >= 2 ? 'text-yellow-600' : 'text-gray-700'}`}>
+              {count}<span className="text-sm font-normal text-gray-400">/{limit}</span>
+            </div>
+            <div className="text-xs text-gray-500 mt-0.5">{label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Active write-up / PIP warning */}
+      {hasActiveWriteup && (
+        <div className="px-4 py-2 bg-purple-50 border-b border-purple-100 flex items-center gap-2">
+          <span className="text-purple-700 text-xs font-semibold">⚠ Active write-up or PIP — progress frozen</span>
+        </div>
+      )}
+
+      {/* Termination warning */}
+      {shouldTerminate && (
+        <div className="px-4 py-2 bg-red-50 border-b border-red-200">
+          <p className="text-red-700 text-xs font-bold">⛔ TERMINATION THRESHOLD REACHED — review immediately</p>
+        </div>
+      )}
+
+      {/* Log event form */}
+      {logging && isManager && (
+        <div className="px-4 py-4 border-b border-gray-100 bg-orange-50 space-y-3">
+          <p className="text-sm font-semibold text-gray-700">Log Attendance Event</p>
+          <div className="flex flex-wrap gap-2">
+            {(['ncns', 'callout', 'late', 'writeup', 'pip'] as const).map(t => (
+              <button
+                key={t}
+                onClick={() => setLogType(t)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+                  logType === t ? EVENT_COLORS[t] + ' ring-2 ring-offset-1 ring-orange-400' : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                {EVENT_LABELS[t]}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <input
+              type="date"
+              value={logDate}
+              onChange={e => setLogDate(e.target.value)}
+              className="border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
+            />
+            <input
+              type="text"
+              placeholder="Notes (optional)"
+              value={logNotes}
+              onChange={e => setLogNotes(e.target.value)}
+              className="flex-1 border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
+            />
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => { setLogging(false); setLogType(null) }} className="px-4 py-1.5 rounded border border-gray-300 text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
+            <button
+              onClick={logEvent}
+              disabled={!logType || saving}
+              className="px-4 py-1.5 rounded bg-orange-600 text-white text-sm font-semibold hover:bg-orange-700 disabled:opacity-40"
+            >
+              {saving ? 'Saving…' : 'Log Event'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Manual unfreeze */}
+      {member.progress_frozen && isManager && !shouldFreeze && (
+        <div className="px-4 py-3 border-b border-gray-100 bg-green-50 flex items-center justify-between">
+          <p className="text-sm text-green-700">Window looks clean — ready to unfreeze.</p>
+          <button onClick={manualUnfreeze} className="text-xs bg-green-600 text-white px-3 py-1.5 rounded-lg hover:bg-green-700 font-medium">
+            Unfreeze
+          </button>
+        </div>
+      )}
+
+      {/* Event history */}
+      {recentEvents.length === 0 ? (
+        <p className="text-sm text-gray-400 text-center py-5">No events logged.</p>
+      ) : (
+        <div className="divide-y divide-gray-100">
+          {recentEvents.map(event => (
+            <div key={event.id} className={`flex items-start gap-3 px-4 py-3 ${event.resolved ? 'opacity-50' : ''}`}>
+              <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border flex-shrink-0 mt-0.5 ${EVENT_COLORS[event.event_type]}`}>
+                {EVENT_LABELS[event.event_type]}
+              </span>
+              <div className="flex-1 min-w-0">
+                <div className="text-xs text-gray-500">
+                  {new Date(event.event_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                  {event.resolved && <span className="ml-2 text-green-600">✓ Resolved</span>}
+                </div>
+                {event.notes && <div className="text-xs text-gray-600 mt-0.5">{event.notes}</div>}
+              </div>
+              {!event.resolved && isManager && (
+                <button
+                  onClick={() => resolveEvent(event.id)}
+                  className="text-xs text-green-600 hover:text-green-800 flex-shrink-0"
+                >
+                  Resolve
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Badge Section (reusable for both primary + cross-train tracks) ───────────
 
 function BadgeSection({
@@ -327,6 +584,26 @@ function BadgeSection({
       ? 'bg-orange-50 border-orange-200'
       : 'bg-sky-50 border-sky-200'
   const labelColor = isPrimary ? 'text-orange-800' : targetBadge.track === 'BOH' ? 'text-orange-700' : 'text-sky-700'
+
+  // If frozen, show a locked overlay instead of skills
+  if (member.progress_frozen) {
+    return (
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+        <div className={`px-4 py-3 border-b flex items-center justify-between ${headerColor}`}>
+          <div>
+            <h2 className={`font-bold text-base ${labelColor}`}>{sectionLabel}</h2>
+            <p className="text-xs text-gray-500 mt-0.5">{targetBadge.pay} · {targetBadge.notes}</p>
+          </div>
+        </div>
+        <div className="px-4 py-6 text-center space-y-2">
+          <div className="text-3xl">🔒</div>
+          <p className="font-bold text-gray-700">Progress Frozen</p>
+          <p className="text-sm text-gray-500">{member.freeze_reason ?? 'See attendance section below.'}</p>
+          <p className="text-xs text-gray-400">Hours and skills already logged are preserved. Progress resumes once the 90-day window is clean.</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
@@ -469,6 +746,7 @@ function MemberDetail({
 }) {
   const [progress, setProgress] = useState<SkillProgress[]>([])
   const [awarded, setAwarded] = useState<AwardedBadge[]>([])
+  const [attendance, setAttendance] = useState<AttendanceEvent[]>([])
   const [loading, setLoading] = useState(true)
   const [savingShifts, setSavingShifts] = useState(false)
   const [awardConfirm, setAwardConfirm] = useState<Badge | null>(null)
@@ -495,12 +773,14 @@ function MemberDetail({
   useEffect(() => {
     async function load() {
       setLoading(true)
-      const [{ data: prog }, { data: aw }] = await Promise.all([
+      const [{ data: prog }, { data: aw }, { data: att }] = await Promise.all([
         supabase.from('badge_progress').select('*').eq('member_id', member.id),
         supabase.from('awarded_badges').select('*').eq('member_id', member.id).order('awarded_at', { ascending: false }),
+        supabase.from('attendance_events').select('*').eq('member_id', member.id).order('event_date', { ascending: false }),
       ])
       setProgress((prog as SkillProgress[]) ?? [])
       setAwarded((aw as AwardedBadge[]) ?? [])
+      setAttendance((att as AttendanceEvent[]) ?? [])
       setLoading(false)
     }
     load()
@@ -589,9 +869,19 @@ function MemberDetail({
             )}
             {currentBadge && <span className="text-xs text-gray-500">{currentBadge.pay}</span>}
             {!member.active && <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">Inactive</span>}
+            {member.progress_frozen && <span className="text-xs bg-red-600 text-white px-2 py-0.5 rounded-full font-bold">🔒 Frozen</span>}
           </div>
         </div>
       </div>
+
+      {/* Frozen banner */}
+      {member.progress_frozen && (
+        <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+          <p className="font-bold text-red-700">🔒 Progress Frozen</p>
+          <p className="text-sm text-red-600 mt-0.5">{member.freeze_reason ?? 'Review attendance below.'}</p>
+          <p className="text-xs text-red-400 mt-1">Hours and completed skills are preserved. Badge progress resumes automatically once the 90-day window is clean.</p>
+        </div>
+      )}
 
       {/* Stats bar — all pulled from Toast automatically */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -687,6 +977,15 @@ function MemberDetail({
         awarded={awarded}
         label={crossTrack}
         color="bg-sky-50"
+      />
+
+      {/* ── Attendance & Freeze ── */}
+      <AttendanceSection
+        member={member}
+        events={attendance}
+        isManager={isManager}
+        onEventsChanged={setAttendance}
+        onFreezeChanged={(frozen, reason) => onUpdated({ ...member, progress_frozen: frozen, freeze_reason: reason })}
       />
 
       {/* Remove from site */}
@@ -946,6 +1245,7 @@ export default function TeamPage() {
                       <span className="font-bold text-gray-900">{m.name}</span>
                       <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${trackColor(m.track)}`}>{m.track}</span>
                       {!m.active && <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full">Inactive</span>}
+                      {m.progress_frozen && <span className="text-xs bg-red-600 text-white px-2 py-0.5 rounded-full font-bold">🔒 Frozen</span>}
                     </div>
                     <div className="flex items-center gap-2 mt-1 flex-wrap">
                       {badge && (
