@@ -592,43 +592,54 @@ function MemberDetail({
         </div>
       </div>
 
-      {/* Stats bar */}
+      {/* Stats bar — all pulled from Toast automatically */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <div className="bg-white border border-gray-200 rounded-xl p-3 text-center">
-          <div className="text-2xl font-bold text-gray-900">{member.total_shifts}</div>
-          <div className="text-xs text-gray-500 mt-0.5">Total Shifts</div>
-          {isManager && (
-            <button onClick={addShift} disabled={savingShifts} className="mt-2 text-xs bg-orange-100 text-orange-700 px-3 py-1 rounded-full hover:bg-orange-200 disabled:opacity-50">
-              + Add Shift
-            </button>
-          )}
+
+        {/* Total Shifts */}
+        <div className="bg-white border border-gray-200 rounded-xl p-4 text-center">
+          <div className="text-3xl font-bold text-gray-900">{member.total_shifts}</div>
+          <div className="text-xs text-gray-500 mt-1 uppercase tracking-wide">Total Shifts</div>
+          <div className="text-xs text-gray-400 mt-1">via Toast</div>
         </div>
-        <div className="bg-white border border-gray-200 rounded-xl p-3 text-center">
-          <div className="text-2xl font-bold text-gray-900">{daysWorked ?? '—'}</div>
-          <div className="text-xs text-gray-500 mt-0.5">Days Employed</div>
-          {member.start_date && (
-            <div className="text-xs text-gray-400 mt-1">{new Date(member.start_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</div>
-          )}
+
+        {/* Days Employed */}
+        <div className="bg-white border border-gray-200 rounded-xl p-4 text-center">
+          <div className="text-3xl font-bold text-gray-900">{daysWorked ?? '—'}</div>
+          <div className="text-xs text-gray-500 mt-1 uppercase tracking-wide">Days Employed</div>
+          <div className="text-xs text-gray-400 mt-1">
+            {member.start_date
+              ? `Since ${new Date(member.start_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+              : 'Start date unknown'}
+          </div>
         </div>
-        <div className="bg-white border border-gray-200 rounded-xl p-3 text-center">
-          <div className="text-2xl font-bold text-gray-900">{totalHours.toFixed(0)}</div>
-          <div className="text-xs text-gray-500 mt-0.5">Total Hours</div>
-          {isManager && (
-            <div className="flex gap-1 mt-2 justify-center">
-              <input type="number" min="0" defaultValue={member.boh_hours} onBlur={e => updateHours('boh_hours', e.target.value)} className="w-14 text-xs border border-gray-200 rounded px-1 py-0.5 text-center" placeholder="BOH" title="BOH hours" />
-              <input type="number" min="0" defaultValue={member.foh_hours} onBlur={e => updateHours('foh_hours', e.target.value)} className="w-14 text-xs border border-gray-200 rounded px-1 py-0.5 text-center" placeholder="FOH" title="FOH hours" />
-            </div>
-          )}
+
+        {/* Total Hours */}
+        <div className="bg-white border border-gray-200 rounded-xl p-4 text-center">
+          <div className="text-3xl font-bold text-gray-900">{totalHours.toFixed(0)}</div>
+          <div className="text-xs text-gray-500 mt-1 uppercase tracking-wide">Total Hours</div>
+          <div className="text-xs text-gray-400 mt-1">
+            {member.boh_hours > 0 || member.foh_hours > 0
+              ? `${member.boh_hours.toFixed(0)} BOH · ${member.foh_hours.toFixed(0)} FOH`
+              : 'via Toast'}
+          </div>
         </div>
-        <div className={`border rounded-xl p-3 text-center ${member.servsafe_active ? 'bg-green-50 border-green-200' : 'bg-white border-gray-200'}`}>
-          <div className={`text-2xl font-bold ${member.servsafe_active ? 'text-green-600' : 'text-gray-400'}`}>{member.servsafe_active ? '✓' : '✗'}</div>
-          <div className="text-xs text-gray-500 mt-0.5">ServSafe</div>
+
+        {/* ServSafe */}
+        <div className={`border rounded-xl p-4 text-center ${member.servsafe_active ? 'bg-green-50 border-green-200' : 'bg-white border-gray-200'}`}>
+          <div className={`text-3xl font-bold ${member.servsafe_active ? 'text-green-600' : 'text-gray-400'}`}>
+            {member.servsafe_active ? '✓' : '✗'}
+          </div>
+          <div className="text-xs text-gray-500 mt-1 uppercase tracking-wide">ServSafe</div>
           {isManager && (
-            <button onClick={toggleServsafe} className={`mt-2 text-xs px-3 py-1 rounded-full ${member.servsafe_active ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+            <button
+              onClick={toggleServsafe}
+              className={`mt-2 text-xs px-3 py-1 rounded-full ${member.servsafe_active ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+            >
               {member.servsafe_active ? 'Active' : 'Mark Active'}
             </button>
           )}
         </div>
+
       </div>
 
       {/* ── Primary track badge section ── */}
